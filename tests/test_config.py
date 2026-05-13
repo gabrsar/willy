@@ -30,7 +30,15 @@ def test_config_round_trip(tmp_path: Path) -> None:
 
 def test_state_round_trip(tmp_path: Path) -> None:
     paths = default_paths(tmp_path)
-    state = WillyState(last_commit="abc123 test", last_sync_status="ok", daemon_pid=123)
+    state = WillyState(
+        last_commit="abc123 test",
+        last_sync_at="2026-05-13T18:00:00-03:00",
+        last_sync_status="ok",
+        daemon_pid=123,
+        pending_save_since="2026-05-13T18:00:01-03:00",
+        next_save_at="2026-05-13T18:00:04-03:00",
+        pending_save_count=2,
+    )
 
     save_state(paths, state)
     loaded = load_state(paths)

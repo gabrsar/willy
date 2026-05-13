@@ -36,6 +36,17 @@ def test_status_porcelain_reports_changes(tmp_path: Path) -> None:
     assert entries[0].path == "profile.json"
 
 
+def test_status_porcelain_preserves_paths_with_spaces(tmp_path: Path) -> None:
+    run_git(tmp_path, "init")
+    profile = tmp_path / "default" / "filament" / "PETG Fast.json"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("{}\n", encoding="utf-8")
+
+    entries = status_porcelain(tmp_path)
+
+    assert entries[0].path == "default/filament/PETG Fast.json"
+
+
 def test_run_git_can_return_nonzero_without_raising(tmp_path: Path) -> None:
     result = run_git(tmp_path, "rev-parse", "--is-inside-work-tree", check=False)
 

@@ -35,6 +35,9 @@ class WillyState:
     last_sync_at: str | None = None
     last_sync_status: str | None = None
     daemon_pid: int | None = None
+    pending_save_since: str | None = None
+    next_save_at: str | None = None
+    pending_save_count: int = 0
 
     @classmethod
     def empty(cls) -> WillyState:
@@ -91,6 +94,9 @@ def load_state(paths: WillyPaths) -> WillyState:
         last_sync_at=data.get("last_sync_at"),
         last_sync_status=data.get("last_sync_status"),
         daemon_pid=data.get("daemon_pid"),
+        pending_save_since=data.get("pending_save_since"),
+        next_save_at=data.get("next_save_at"),
+        pending_save_count=int(data.get("pending_save_count", 0)),
     )
 
 

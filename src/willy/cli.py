@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -8,13 +10,11 @@ import typer
 
 from willy import __version__
 from willy.backup import create_backup
-from willy.config import load_config, load_state, save_config
+from willy.config import load_config, load_state, save_config, save_state
+from willy.daemon import pid_is_running, run_daemon, start_background, stop_background
 from willy.errors import ConfigError, GitError, WillyError
-from willy.files import classify_path
 from willy.git import (
-    add_paths,
     add_remote,
-    commit,
     current_branch,
     git_available,
     init_repo,
@@ -25,7 +25,7 @@ from willy.git import (
     validate_remote_access,
 )
 from willy.logging import setup_logging, write_event
-from willy.metadata import change_type_from_status, commit_body, commit_subject, extract_metadata
+from willy.operations import save_profile_changes, sync_repo, unsaved_summary
 from willy.orca import is_orca_running
 from willy.paths import default_paths
 from willy.protection import apply_poacher_protection
@@ -47,6 +47,7 @@ status Show sync health
 
 Usage:
   willy setup [--mode new|existing] [--remote URL] [--protect-from-bamboo-poachers] [--dry-run]
+  willy daemon
   willy start
   willy stop
   willy save "description"
@@ -90,6 +91,29 @@ def _format_git_error(exc: GitError) -> str:
             "Run `willy setup --generate-ssh-key --remote <url>` or add an existing SSH key to your Git host."
         )
     return str(exc)
+
+
+def _format_sync_line(state) -> str:
+    if not state.last_sync_status:
+        return "none"
+    if not state.last_sync_at:
+        return state.last_sync_status
+    return f"{state.last_sync_status} at {state.last_sync_at}"
+
+
+def _format_next_save(state, *, daemon_running: bool, unsaved_count: int) -> str:
+    if state.next_save_at:
+        try:
+            next_save = datetime.fromisoformat(state.next_save_at)
+            seconds = max(0, int((next_save - datetime.now(next_save.tzinfo)).total_seconds()))
+            return f"{state.next_save_at} (~{seconds}s, {state.pending_save_count} pending batch(es))"
+        except ValueError:
+            return state.next_save_at
+    if not daemon_running:
+        return "daemon not running"
+    if unsaved_count:
+        return "waiting for new file event or Orca close"
+    return "no pending save"
 
 
 @app.callback()
@@ -155,6 +179,62 @@ def setup(
 
     if is_orca_running():
         _abort("OrcaSlicer is open. Save your work, close OrcaSlicer, then run `willy setup` again.")
+
+    existing_repo = is_repo(config.repo_path)
+    detected_remote = remote_url(config.repo_path) if existing_repo else None
+    remote_was_provided = remote is not None
+
+    if existing_repo:
+        typer.echo(f"Existing Git repo found: {config.repo_path}")
+        if detected_remote:
+            typer.echo(f"Existing origin remote: {detected_remote}")
+        if remote is None:
+            remote = detected_remote
+
+        use_existing_repo = yes
+        if not yes and mode is None:
+            use_existing_repo = typer.confirm("Use this Git repo as Willy's default?", default=True)
+
+        if use_existing_repo or mode in ("existing", "new"):
+            if remote and not dry_run:
+                typer.echo("Validating remote access...")
+                validate_remote_access(config.repo_path, remote)
+                if remote_was_provided:
+                    add_remote(config.repo_path, remote)
+                    typer.echo("Configured origin remote.")
+                else:
+                    typer.echo("Remote access OK.")
+            elif remote and dry_run:
+                typer.echo(f"Dry run: would configure origin remote: {remote}")
+                typer.echo("Dry run: would validate remote access with Git.")
+
+            if protect_from_bamboo_poachers and not dry_run:
+                changed = apply_poacher_protection(config.repo_path)
+                if changed:
+                    typer.echo("Added AGPL-3.0 protection assets.")
+                else:
+                    typer.echo("Protection assets already present.")
+            elif protect_from_bamboo_poachers and dry_run:
+                typer.echo("Dry run: would add AGPL-3.0 protection assets for the existing repo.")
+
+            if dry_run:
+                typer.echo("Dry run: would save this Git repo as Willy's default.")
+                return
+
+            save_config(
+                paths,
+                replace(
+                    config,
+                    repo_path=config.repo_path,
+                    remote=remote or config.remote,
+                    protect_from_bamboo_poachers=protect_from_bamboo_poachers or config.protect_from_bamboo_poachers,
+                ),
+            )
+            write_event(paths, "setup_existing_repo", repo=str(config.repo_path), remote=remote)
+            typer.echo("Using existing Git repo as Willy's default.")
+            return
+
+        _abort("Setup cancelled. Willy did not change your config.")
 
     if mode is None:
         if yes:
@@ -234,13 +314,52 @@ def setup(
 @app.command()
 def start() -> None:
     """Start automatic syncing."""
-    typer.echo("start is not implemented yet.")
+    paths = default_paths()
+    setup_logging(paths)
+    state = load_state(paths)
+    pid = start_background(paths, state)
+    write_event(paths, "start", pid=pid)
+    typer.echo(f"Willy daemon running: pid {pid}")
 
 
 @app.command()
 def stop() -> None:
     """Stop automatic syncing."""
-    typer.echo("stop is not implemented yet.")
+    paths = default_paths()
+    setup_logging(paths)
+    state = load_state(paths)
+    stopped = stop_background(paths, state)
+    write_event(paths, "stop", stopped=stopped)
+    if stopped:
+        typer.echo("Willy daemon stopped.")
+    else:
+        typer.echo("Willy daemon was not running.")
+
+
+@app.command()
+def daemon(
+    once: Annotated[
+        bool,
+        typer.Option("--once", help="Run one idle/close cycle then exit. Useful for tests and debugging."),
+    ] = False,
+    poll_seconds: Annotated[
+        float,
+        typer.Option("--poll-seconds", help="Seconds between Orca process checks."),
+    ] = 2.0,
+) -> None:
+    """Run the background watcher."""
+    paths = default_paths()
+    setup_logging(paths)
+    config = load_config(paths)
+    state = load_state(paths)
+    run_daemon(
+        paths,
+        config,
+        state=state,
+        is_orca_running_func=is_orca_running,
+        poll_seconds=poll_seconds,
+        once=once,
+    )
 
 
 @app.command()
@@ -256,51 +375,19 @@ def save(description: Annotated[str, typer.Argument(help="Human description for 
     if not is_repo(repo):
         _abort(f"Sync repo is not a Git repository yet: {repo}. Run `willy setup` first.")
 
-    entries = status_porcelain(repo)
-    changed_paths: list[Path] = []
-    first_event = "modified"
-    for entry in entries:
-        event = change_type_from_status(entry.code)
-        candidates = [part.strip() for part in entry.path.split(" -> ") if part.strip()]
-        for candidate in candidates:
-            candidate_path = Path(candidate)
-            if classify_path(repo, repo / candidate_path).trackable:
-                changed_paths.append(candidate_path)
-                if len(changed_paths) == 1:
-                    first_event = event
-
-    unique_paths = sorted(set(changed_paths))
-    if not unique_paths:
+    result = save_profile_changes(repo, description=description)
+    if not result.saved:
         typer.echo("Nothing to save.")
-        return
-
-    add_paths(repo, unique_paths)
-
-    if len(unique_paths) == 1:
-        commit_path = unique_paths[0]
-        metadata = extract_metadata(repo, commit_path)
-        subject = commit_subject(first_event, metadata, commit_path)
-        body = commit_body(
-            metadata=metadata,
-            event=first_event,
-            relative_path=commit_path,
-            description=description,
-        )
     else:
-        commit_path = Path(f"{len(unique_paths)} files")
-        metadata = extract_metadata(repo, unique_paths[0])
-        subject = commit_subject("mixed", metadata, commit_path)
-        body = commit_body(
-            metadata=metadata,
-            event="mixed",
-            relative_path=commit_path,
-            description=description,
-            changed_paths=unique_paths,
-        )
+        write_event(paths, "manual_save", repo=str(repo), count=result.count, subject=result.subject)
+        typer.echo(f"Saved {result.count} file(s).")
 
-    commit(repo, subject, body)
-    write_event(paths, "manual_save", repo=str(repo), changed_paths=[str(path) for path in unique_paths])
-    typer.echo(f"Saved {len(unique_paths)} file(s).")
+    sync_status = sync_repo(repo)
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    state = load_state(paths)
+    save_state(paths, replace(state, last_sync_at=now, last_sync_status=sync_status))
+    write_event(paths, "manual_save_sync", repo=str(repo), sync_status=sync_status)
+    typer.echo(f"Sync: {sync_status}")
 
 
 @app.command()
@@ -320,6 +407,7 @@ def status() -> None:
     branch = current_branch(repo) if repo_ready else None
     remote = remote_url(repo) if repo_ready else None
     changes = status_porcelain(repo) if repo_ready else []
+    unsaved = unsaved_summary(repo) if repo_ready else None
     last = last_commit(repo) if repo_ready else None
     orca_running = is_orca_running()
 
@@ -334,9 +422,18 @@ def status() -> None:
     typer.echo(f"Git branch: {branch or 'unknown'}")
     typer.echo(f"Remote: {remote or 'none'}")
     typer.echo(f"Uncommitted changes: {len(changes)}")
-    typer.echo(f"Daemon status: {'pid ' + str(state.daemon_pid) if state.daemon_pid else 'not running'}")
+    typer.echo(f"Unsaved configs: {unsaved.count if unsaved else 0}")
+    if unsaved and unsaved.paths:
+        typer.echo("Unsaved config paths:")
+        for path in unsaved.paths:
+            typer.echo(f"  {path}")
+    daemon_running = pid_is_running(state.daemon_pid)
+    daemon_status = f"pid {state.daemon_pid}" if daemon_running else "not running"
+    next_save = _format_next_save(state, daemon_running=daemon_running, unsaved_count=unsaved.count if unsaved else 0)
+    typer.echo(f"Daemon status: {daemon_status}")
+    typer.echo(f"Next save: {next_save}")
     typer.echo(f"Last commit: {last or state.last_commit or 'none'}")
-    typer.echo(f"Last sync: {state.last_sync_status or 'none'}")
+    typer.echo(f"Last sync: {_format_sync_line(state)}")
 
 
 @app.command()

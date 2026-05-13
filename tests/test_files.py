@@ -15,6 +15,18 @@ def test_classifies_default_profile_json(tmp_path: Path) -> None:
     assert result.relative_path == Path("default/filament/ABS.json")
 
 
+def test_classifies_user_id_profile_json(tmp_path: Path) -> None:
+    profile = tmp_path / "2765349417" / "process" / "Fast.json"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("{}\n", encoding="utf-8")
+
+    result = classify_path(tmp_path, profile)
+
+    assert result.trackable
+    assert result.profile_type == "process"
+    assert result.relative_path == Path("2765349417/process/Fast.json")
+
+
 def test_ignores_git_and_temp_files(tmp_path: Path) -> None:
     git_file = tmp_path / ".git" / "config"
     tmp_file = tmp_path / "default" / "process" / "profile.tmp"

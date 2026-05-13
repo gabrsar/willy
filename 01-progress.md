@@ -14,12 +14,12 @@ This file tracks implementation progress. Keep `00-plan.md` as the architecture/
 
 ## Current Snapshot
 
-- Current phase: Phase 9 - Watch Daemon.
-- Current goal: start automatic monitoring now that setup, status, save, metadata, backup, and remote basics exist.
-- Next milestone: daemon command with singleton lock, Orca polling, recursive watch loop scaffold, and safe event batching.
+- Current phase: Phase 10 - Sync On Orca Close.
+- Current goal: harden automatic close-time sync now that daemon/start/stop and watcher batching exist.
+- Next milestone: conflict-aware pull-rebase/push handling with recovery guidance.
 - Primary platform: macOS first.
 - Later platforms: Windows and Linux after macOS behavior is stable.
-- Repository state: Python package skeleton, CLI foundation, config/state/logging helpers, Git wrapper, file classification, backups, locks, metadata extraction, manual save, setup foundation, remote validation, SSH guidance, protection assets, Makefile, Git hooks, and tests exist.
+- Repository state: Python package skeleton, CLI foundation, config/state/logging helpers, Git wrapper, file classification, backups, locks, metadata extraction, manual save, setup foundation, remote validation, SSH guidance, protection assets, daemon/start/stop scaffold, watcher batching, Makefile, Git hooks, and tests exist.
 
 ## Immediate Next Actions
 
@@ -36,9 +36,11 @@ This file tracks implementation progress. Keep `00-plan.md` as the architecture/
 11. [x] Finish interactive setup choices and remote validation.
 12. [x] Add SSH key guidance flow.
 13. [x] Add AGPL/README protection assets.
-14. [ ] Add daemon command and watcher dependencies.
-15. [ ] Implement Orca polling watch loop.
-16. [ ] Add sync-on-close flow.
+14. [x] Add daemon command and watcher dependencies.
+15. [x] Implement Orca polling watch loop.
+16. [~] Add sync-on-close flow.
+17. [ ] Add conflict-aware sync recovery.
+18. [ ] Implement history command.
 
 ## Phase 0 - Planning
 
@@ -289,25 +291,25 @@ Goal: automatically commit meaningful changes while Orca runs.
 
 Tasks:
 
-- [ ] Implement daemon command.
-- [ ] Poll for Orca process.
-- [ ] Enter watch mode when Orca launches.
-- [ ] Watch recursively using `watchdog`.
-- [ ] Record create/modify/delete/rename events.
-- [ ] Debounce noisy writes.
+- [x] Implement daemon command.
+- [x] Poll for Orca process.
+- [x] Enter watch mode when Orca launches.
+- [x] Watch recursively using `watchdog`.
+- [x] Record create/modify/delete/rename events.
+- [x] Debounce noisy writes.
 - [ ] Periodically flush long-running batches.
-- [ ] Run Git status before committing.
-- [ ] Commit meaningful batches.
-- [ ] Log watcher batches.
-- [ ] Handle watcher errors without corrupting state.
-- [ ] Add integration tests around temp directories.
+- [x] Run Git status before committing.
+- [x] Commit meaningful batches.
+- [x] Log watcher batches.
+- [~] Handle watcher errors without corrupting state.
+- [x] Add integration tests around temp directories.
 
 Acceptance criteria:
 
-- [ ] Daemon does nothing while Orca is closed.
-- [ ] Daemon starts watching when Orca opens.
-- [ ] File changes create commits after debounce.
-- [ ] No duplicate daemon instance can run.
+- [x] Daemon does nothing while Orca is closed.
+- [x] Daemon starts watching when Orca opens.
+- [~] File changes create commits after debounce.
+- [x] No duplicate daemon instance can run.
 
 ## Phase 10 - Sync On Orca Close
 
@@ -315,13 +317,13 @@ Goal: sync safely at the moment Orca exits.
 
 Tasks:
 
-- [ ] Detect Orca exit.
-- [ ] Stop watcher.
-- [ ] Run final filesystem scan.
-- [ ] Commit remaining changes.
+- [x] Detect Orca exit.
+- [x] Stop watcher.
+- [x] Run final filesystem scan.
+- [x] Commit remaining changes.
 - [ ] Create pre-sync safety marker or backup when needed.
-- [ ] Run `git pull --rebase`.
-- [ ] Run `git push` only when pull/rebase succeeds.
+- [x] Run `git pull --rebase`.
+- [x] Run `git push` only when pull/rebase succeeds.
 - [ ] Detect rebase conflicts.
 - [ ] Abort or pause safely on conflicts.
 - [ ] Print recovery instructions.
@@ -468,6 +470,18 @@ YYYY-MM-DD HH:mm | command/check | result | notes
 2026-05-13 17:45 | make test | pass | 31 tests passed
 2026-05-13 18:00 | make lint && make test | pass | 33 tests passed; bad remote no longer prints traceback
 2026-05-13 18:00 | .venv/bin/willy setup --remote git@github.com:gabrsar/orca-configs.git | pass | fails cleanly before backup/init when remote is inaccessible
+2026-05-13 18:10 | make lint && make test | pass | 36 tests passed; existing repo setup defaults to Yes and saves config
+2026-05-13 18:15 | make lint && make test | pass | 37 tests passed; existing repo setup validates remote access before saving config
+2026-05-13 18:35 | make lint && make test | pass | 43 tests passed; daemon/start/stop scaffold and watcher batching added
+2026-05-13 18:35 | .venv/bin/willy status | pass | local Orca repo detected; daemon not running
+2026-05-13 18:45 | make lint && make test | pass | 44 tests passed; manual save now pushes and handles first upstream push
+2026-05-13 18:45 | .venv/bin/willy status | pass | daemon detected running locally; Orca open
+2026-05-13 19:00 | make lint && make test | pass | 49 tests passed; status shows unsaved configs and save syncs when clean
+2026-05-13 19:00 | .venv/bin/willy status | pass | detected 206 unsaved Orca user-id JSON configs
+2026-05-13 19:10 | make lint && make test | pass | 50 tests passed; status shows next save and sync timestamps
+2026-05-13 19:10 | .venv/bin/willy status | pass | next save reports daemon wait state when no pending event exists
+2026-05-13 19:20 | bash -n scripts/install.sh | pass | installer syntax valid
+2026-05-13 19:20 | make lint && make test | pass | README/package metadata and installer added; 50 tests passed
 ```
 
 ## Change Log
@@ -478,3 +492,10 @@ YYYY-MM-DD HH:mm | command/check | result | notes
 - 2026-05-13: Added Makefile, Ruff dev dependency, local setup target, and Git hooks.
 - 2026-05-13: Added setup mode selection, remote validation, SSH key guidance, and AGPL/README protection assets.
 - 2026-05-13: Fixed CLI Git error boundary and moved remote validation before setup mutations.
+- 2026-05-13: Setup now detects an existing Git repo, defaults to using it, and persists it into Willy config.
+- 2026-05-13: Existing repo setup now validates origin/remote access before adopting the repo.
+- 2026-05-13: Added daemon command, local start/stop, watchdog batching, shared save operation, and local Git commit identity.
+- 2026-05-13: Manual `willy save` now syncs after commit and sets upstream on first push.
+- 2026-05-13: Status now reports unsaved configs, Git status parsing handles spaces, and user-id Orca profile folders are tracked.
+- 2026-05-13: Added pending autosave state fields, next-save status output, and manual-save sync timestamp recording.
+- 2026-05-13: Added polished README, one-line installer script, and switched package readme metadata to README.md.

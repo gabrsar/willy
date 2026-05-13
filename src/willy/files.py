@@ -44,6 +44,13 @@ def _profile_type(relative_path: Path) -> str:
             return "machine"
         if parts[1] == "process":
             return "process"
+    if len(parts) >= 2 and parts[0].isdigit():
+        if parts[1] == "filament":
+            return "filament"
+        if parts[1] == "machine":
+            return "machine"
+        if parts[1] == "process":
+            return "process"
     return "config"
 
 

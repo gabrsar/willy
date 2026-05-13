@@ -6,10 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "willy"
 version = "0.1.0"
 description = "Local-first Git sync for OrcaSlicer profiles."
-readme = "00-plan.md"
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "typer>=0.12",
+  "watchdog>=6.0",
 ]
 
 [project.optional-dependencies]

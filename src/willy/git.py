@@ -94,6 +94,14 @@ def current_branch(path: Path) -> str | None:
     return branch or None
 
 
+def upstream_branch(path: Path) -> str | None:
+    result = run_git(path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", check=False)
+    if result.returncode != 0:
+        return None
+    upstream = result.stdout.strip()
+    return upstream or None
+
+
 def remote_url(path: Path, name: str = "origin") -> str | None:
     result = run_git(path, "remote", "get-url", name, check=False)
     if result.returncode != 0:
@@ -103,16 +111,24 @@ def remote_url(path: Path, name: str = "origin") -> str | None:
 
 
 def status_porcelain(path: Path) -> list[GitStatusEntry]:
-    result = run_git(path, "status", "--porcelain=v1", "--untracked-files=all", check=False)
+    result = run_git(path, "status", "--porcelain=v1", "--untracked-files=all", "-z", check=False)
     if result.returncode != 0:
         return []
     entries: list[GitStatusEntry] = []
-    for line in result.stdout.splitlines():
-        if not line:
+    records = [record for record in result.stdout.split("\0") if record]
+    index = 0
+    while index < len(records):
+        record = records[index]
+        if len(record) < 4:
+            index += 1
             continue
-        code = line[:2]
-        file_path = line[3:] if len(line) > 3 else ""
+        code = record[:2]
+        file_path = record[3:]
         entries.append(GitStatusEntry(code=code, path=file_path))
+        if "R" in code or "C" in code:
+            index += 2
+        else:
+            index += 1
     return entries
 
 
@@ -158,3 +174,42 @@ def commit(path: Path, subject: str, body: str | None = None) -> GitResult:
 def has_commits(path: Path) -> bool:
     result = run_git(path, "rev-parse", "--verify", "HEAD", check=False)
     return result.returncode == 0
+
+
+def config_get(path: Path, key: str) -> str | None:
+    result = run_git(path, "config", "--get", key, check=False)
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def config_get_local(path: Path, key: str) -> str | None:
+    result = run_git(path, "config", "--local", "--get", key, check=False)
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def config_set(path: Path, key: str, value: str) -> GitResult:
+    return run_git(path, "config", key, value)
+
+
+def ensure_commit_identity(path: Path) -> None:
+    if not config_get_local(path, "user.name"):
+        config_set(path, "user.name", "Willy")
+    if not config_get_local(path, "user.email"):
+        config_set(path, "user.email", "willy@local")
+
+
+def pull_rebase(path: Path) -> GitResult:
+    return run_git(path, "pull", "--rebase")
+
+
+def push(path: Path) -> GitResult:
+    return run_git(path, "push")
+
+
+def push_set_upstream(path: Path, remote: str, branch: str) -> GitResult:
+    return run_git(path, "push", "-u", remote, branch)

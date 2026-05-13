@@ -137,6 +137,10 @@ def add_remote(path: Path, url: str, name: str = "origin") -> GitResult:
     return run_git(path, "remote", "add", name, url)
 
 
+def validate_remote_access(path: Path, url: str) -> GitResult:
+    return run_git(path, "ls-remote", url)
+
+
 def add_paths(path: Path, paths: list[Path]) -> GitResult | None:
     if not paths:
         return None
@@ -149,3 +153,8 @@ def commit(path: Path, subject: str, body: str | None = None) -> GitResult:
     if body:
         args.extend(["-m", body])
     return run_git(path, *args)
+
+
+def has_commits(path: Path) -> bool:
+    result = run_git(path, "rev-parse", "--verify", "HEAD", check=False)
+    return result.returncode == 0

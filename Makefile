@@ -7,7 +7,20 @@ WILLY := $(BIN)/willy
 PYTEST := $(BIN)/pytest
 RUFF := $(BIN)/ruff
 
-.PHONY: setup install run stop test lint hooks clean
+.PHONY: help setup install run stop test lint hooks clean
+
+help:
+	@printf '%s\n' \
+		'Willy development commands:' \
+		'' \
+		'  make setup    Create/update .venv, install deps, initialize Git, install hooks' \
+		'  make install  Create/update .venv and install runtime/dev deps' \
+		'  make run      Start Willy background syncing via willy start' \
+		'  make stop     Stop Willy background syncing via willy stop' \
+		'  make test     Run the test suite' \
+		'  make lint     Format and lint src/tests with Ruff' \
+		'  make hooks    Install Git pre-commit and pre-push hooks' \
+		'  make clean    Remove local test/cache artifacts'
 
 setup: install hooks
 	@echo "Willy dev environment is ready."

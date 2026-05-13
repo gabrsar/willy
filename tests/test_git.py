@@ -1,6 +1,14 @@
 from pathlib import Path
 
-from willy.git import current_branch, is_repo, last_commit, remote_url, run_git, status_porcelain
+from willy.git import (
+    current_branch,
+    is_repo,
+    last_commit,
+    remote_url,
+    run_git,
+    status_porcelain,
+    validate_remote_access,
+)
 
 
 def test_git_repo_helpers(tmp_path: Path) -> None:
@@ -33,3 +41,15 @@ def test_run_git_can_return_nonzero_without_raising(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert isinstance(result.stderr, str)
+
+
+def test_validate_remote_access_with_local_bare_repo(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    work = tmp_path / "work"
+    remote.mkdir()
+    work.mkdir()
+    run_git(remote, "init", "--bare")
+
+    result = validate_remote_access(work, str(remote))
+
+    assert result.returncode == 0

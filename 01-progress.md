@@ -14,12 +14,12 @@ This file tracks implementation progress. Keep `00-plan.md` as the architecture/
 
 ## Current Snapshot
 
-- Current phase: Phase 6 - Setup Flow.
-- Current goal: finish safe first-time setup UX after landing file rules, backup primitives, lock primitives, metadata extraction, and manual save.
-- Next milestone: complete interactive setup choices, remote validation, SSH guidance, and protection assets.
+- Current phase: Phase 9 - Watch Daemon.
+- Current goal: start automatic monitoring now that setup, status, save, metadata, backup, and remote basics exist.
+- Next milestone: daemon command with singleton lock, Orca polling, recursive watch loop scaffold, and safe event batching.
 - Primary platform: macOS first.
 - Later platforms: Windows and Linux after macOS behavior is stable.
-- Repository state: Python package skeleton, CLI foundation, config/state/logging helpers, Git wrapper, file classification, backups, locks, metadata extraction, manual save, setup foundation, Makefile, Git hooks, and tests exist.
+- Repository state: Python package skeleton, CLI foundation, config/state/logging helpers, Git wrapper, file classification, backups, locks, metadata extraction, manual save, setup foundation, remote validation, SSH guidance, protection assets, Makefile, Git hooks, and tests exist.
 
 ## Immediate Next Actions
 
@@ -33,9 +33,12 @@ This file tracks implementation progress. Keep `00-plan.md` as the architecture/
 8. [x] Add Orca file classification and ignore rules.
 9. [x] Add backup manager and lock manager.
 10. [x] Start safe `willy setup` implementation.
-11. [ ] Finish interactive setup choices and remote validation.
-12. [ ] Add SSH key guidance flow.
-13. [ ] Add AGPL/README protection assets.
+11. [x] Finish interactive setup choices and remote validation.
+12. [x] Add SSH key guidance flow.
+13. [x] Add AGPL/README protection assets.
+14. [ ] Add daemon command and watcher dependencies.
+15. [ ] Implement Orca polling watch loop.
+16. [ ] Add sync-on-close flow.
 
 ## Phase 0 - Planning
 
@@ -139,7 +142,7 @@ Tasks:
 - [x] Add command timeout handling.
 - [ ] Add redaction for command logs where needed.
 - [x] Add tests using temporary repos.
-- [ ] Add tests against a local bare repo remote.
+- [x] Add tests against a local bare repo remote.
 
 Acceptance criteria:
 
@@ -208,24 +211,24 @@ Tasks:
 - [x] Detect Orca user directory.
 - [x] Refuse setup if Orca is running.
 - [x] Create backup.
-- [ ] Ask whether to use existing repo or create new repo.
+- [x] Ask whether to use existing repo or create new repo.
 - [x] Initialize repo in place for new local repo.
 - [x] Support existing remote URL.
-- [ ] Validate remote access using Git/SSH only.
-- [ ] Detect missing SSH key.
-- [ ] Offer SSH key generation.
-- [ ] Print public key and provider-neutral setup instructions.
-- [ ] Add AGPL-3.0 LICENSE when protection flag is enabled.
-- [ ] Add README protected section when protection flag is enabled.
+- [x] Validate remote access using Git/SSH only.
+- [x] Detect missing SSH key.
+- [x] Offer SSH key generation.
+- [x] Print public key and provider-neutral setup instructions.
+- [x] Add AGPL-3.0 LICENSE when protection flag is enabled.
+- [x] Add README protected section when protection flag is enabled.
 - [ ] Offer launchd integration.
-- [ ] Ensure setup is idempotent.
+- [~] Ensure setup is idempotent.
 
 Acceptance criteria:
 
 - [~] Setup can be run twice without corrupting anything.
 - [x] Setup never proceeds while Orca is open.
 - [x] New repo path is a valid Git repo.
-- [ ] Existing repo path is validated before profile data is moved or merged.
+- [~] Existing repo path is validated before profile data is moved or merged.
 
 ## Phase 7 - Metadata Extraction
 
@@ -442,6 +445,8 @@ Do not start until macOS flow is stable.
 - [x] Setup refuses to run while OrcaSlicer is open.
 - [x] Safety favors backups and explicit recovery over invisible conflict handling.
 - [x] v1 stages JSON files only; `.info` and `hints.cereal` are not tracked by default.
+- [x] Setup validates remotes using Git CLI only.
+- [x] Setup protection uses AGPL-3.0 only, not a custom anti-company license.
 
 ## Verification Log
 
@@ -459,6 +464,10 @@ YYYY-MM-DD HH:mm | command/check | result | notes
 2026-05-13 17:32 | make lint | pass | Ruff formatted/fixed project files
 2026-05-13 17:32 | make test | pass | 24 tests passed
 2026-05-13 17:33 | make setup | pass | initialized Git repo and installed pre-commit/pre-push hooks
+2026-05-13 17:45 | make lint | pass | setup/SSH/protection additions lint clean
+2026-05-13 17:45 | make test | pass | 31 tests passed
+2026-05-13 18:00 | make lint && make test | pass | 33 tests passed; bad remote no longer prints traceback
+2026-05-13 18:00 | .venv/bin/willy setup --remote git@github.com:gabrsar/orca-configs.git | pass | fails cleanly before backup/init when remote is inaccessible
 ```
 
 ## Change Log
@@ -467,3 +476,5 @@ YYYY-MM-DD HH:mm | command/check | result | notes
 - 2026-05-13: Added Python project skeleton, CLI, config/state/logging helpers, Git wrapper, tests, and `.gitignore`.
 - 2026-05-13: Added JSON-only file classification, backup manager, lock manager, setup foundation, metadata extraction, and manual save.
 - 2026-05-13: Added Makefile, Ruff dev dependency, local setup target, and Git hooks.
+- 2026-05-13: Added setup mode selection, remote validation, SSH key guidance, and AGPL/README protection assets.
+- 2026-05-13: Fixed CLI Git error boundary and moved remote validation before setup mutations.

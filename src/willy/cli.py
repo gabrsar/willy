@@ -8,7 +8,7 @@ import typer
 
 from willy import __version__
 from willy.backup import create_backup
-from willy.config import load_config, load_state
+from willy.config import load_config, load_state, save_config
 from willy.errors import ConfigError, GitError, WillyError
 from willy.files import classify_path
 from willy.git import (
@@ -22,11 +22,20 @@ from willy.git import (
     last_commit,
     remote_url,
     status_porcelain,
+    validate_remote_access,
 )
 from willy.logging import setup_logging, write_event
 from willy.metadata import change_type_from_status, commit_body, commit_subject, extract_metadata
 from willy.orca import is_orca_running
 from willy.paths import default_paths
+from willy.protection import apply_poacher_protection
+from willy.ssh import (
+    existing_public_keys,
+    generate_ed25519_key,
+    is_ssh_remote,
+    public_key_text,
+    setup_instructions,
+)
 
 HELP_TEXT = """TL;DR:
 setup Connect OrcaSlicer profiles to Git
@@ -37,7 +46,7 @@ revert Restore an older profile version
 status Show sync health
 
 Usage:
-  willy setup [--protect-from-bamboo-poachers] [--dry-run]
+  willy setup [--mode new|existing] [--remote URL] [--protect-from-bamboo-poachers] [--dry-run]
   willy start
   willy stop
   willy save "description"
@@ -63,6 +72,24 @@ def _print_help() -> None:
 def _abort(message: str, *, exit_code: int = 1) -> None:
     typer.echo(f"Error: {message}", err=True)
     raise typer.Exit(exit_code)
+
+
+def _format_git_error(exc: GitError) -> str:
+    detail = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+    if "Repository not found" in detail or "Could not read from remote repository" in detail:
+        return (
+            "Could not access the Git remote.\n\n"
+            f"{detail}\n\n"
+            "Check that the repository exists and that your SSH key has access.\n"
+            "For GitHub, create the empty repo first and add your public SSH key to your account."
+        )
+    if "Permission denied" in detail or "publickey" in detail:
+        return (
+            "Could not authenticate to the Git remote.\n\n"
+            f"{detail}\n\n"
+            "Run `willy setup --generate-ssh-key --remote <url>` or add an existing SSH key to your Git host."
+        )
+    return str(exc)
 
 
 @app.callback()
@@ -95,6 +122,18 @@ def setup(
         str | None,
         typer.Option("--remote", help="Optional Git remote URL to configure as origin."),
     ] = None,
+    mode: Annotated[
+        str | None,
+        typer.Option("--mode", help="Setup mode: new or existing."),
+    ] = None,
+    generate_ssh_key: Annotated[
+        bool,
+        typer.Option("--generate-ssh-key", help="Generate ~/.ssh/id_ed25519 if an SSH remote has no key."),
+    ] = False,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", "-y", help="Accept safe setup defaults."),
+    ] = False,
 ) -> None:
     """Connect OrcaSlicer profiles to Git."""
     paths = default_paths()
@@ -105,6 +144,9 @@ def setup(
     typer.echo(f"Orca profile directory: {config.orca_user_dir}")
     typer.echo(f"Repo path: {config.repo_path}")
 
+    if mode not in (None, "new", "existing"):
+        _abort("--mode must be either `new` or `existing`.")
+
     if not git_available():
         _abort("Git is not installed. On macOS, run `xcode-select --install` and then run `willy setup` again.")
 
@@ -114,14 +156,43 @@ def setup(
     if is_orca_running():
         _abort("OrcaSlicer is open. Save your work, close OrcaSlicer, then run `willy setup` again.")
 
+    if mode is None:
+        if yes:
+            mode = "new"
+        else:
+            use_existing = typer.confirm("Use an existing Git remote/repo?", default=bool(remote))
+            mode = "existing" if use_existing else "new"
+
+    if mode == "existing" and not remote:
+        remote = typer.prompt("Git remote URL")
+
+    if mode == "new" and not protect_from_bamboo_poachers and not yes:
+        protect_from_bamboo_poachers = typer.confirm(
+            "Do you want to protect your Orca from bamboo poachers?",
+            default=False,
+        )
+
+    if remote and is_ssh_remote(remote):
+        keys = existing_public_keys(paths.home)
+        if not keys and generate_ssh_key and not dry_run:
+            public_key = generate_ed25519_key(paths.home)
+            typer.echo(setup_instructions(public_key_text(public_key)))
+        elif not keys:
+            typer.echo("No SSH public key found in ~/.ssh.")
+            typer.echo("Run `willy setup --generate-ssh-key ...` to create one, or create your own SSH key.")
+
     if dry_run:
         typer.echo("Dry run: would create a timestamped backup before changing anything.")
         typer.echo("Dry run: would initialize Git in the Orca profile directory if needed.")
         if remote:
             typer.echo(f"Dry run: would configure origin remote: {remote}")
+            typer.echo("Dry run: would validate remote access with Git.")
         if protect_from_bamboo_poachers:
             typer.echo("Dry run: would add AGPL-3.0 protection assets for a new repo.")
         return
+
+    if remote:
+        validate_remote_access(config.repo_path, remote)
 
     backup = create_backup(config.orca_user_dir, paths.backups_dir, reason="setup")
     typer.echo(f"Backup created: {backup.path}")
@@ -137,8 +208,25 @@ def setup(
         typer.echo("Configured origin remote.")
 
     if protect_from_bamboo_poachers:
-        typer.echo("Bamboo poacher protection assets are planned but not implemented yet.")
+        changed = apply_poacher_protection(config.repo_path)
+        if changed:
+            typer.echo("Added AGPL-3.0 protection assets.")
+        else:
+            typer.echo("Protection assets already present.")
 
+    save_config(
+        paths,
+        type(config)(
+            orca_user_dir=config.orca_user_dir,
+            repo_path=config.repo_path,
+            remote=remote or config.remote,
+            branch=config.branch,
+            debounce_seconds=config.debounce_seconds,
+            max_batch_seconds=config.max_batch_seconds,
+            protect_from_bamboo_poachers=protect_from_bamboo_poachers or config.protect_from_bamboo_poachers,
+            launchd_enabled=config.launchd_enabled,
+        ),
+    )
     write_event(paths, "setup", repo=str(config.repo_path), backup=str(backup.path))
     typer.echo("Setup foundation complete.")
 
@@ -302,12 +390,17 @@ Use willy status first when something feels wrong.
     _print_help()
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv in (["--help"], ["-h"]):
         _print_help()
-        return
+        return 0
     try:
         app(args=argv, prog_name="willy")
-    except (GitError, ConfigError, WillyError) as exc:
-        _abort(str(exc))
+    except GitError as exc:
+        typer.echo(f"Error: {_format_git_error(exc)}", err=True)
+        return 1
+    except (ConfigError, WillyError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        return 1
+    return 0

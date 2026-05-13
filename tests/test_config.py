@@ -1,0 +1,38 @@
+from pathlib import Path
+
+from willy.config import WillyConfig, WillyState, load_config, load_state, save_config, save_state
+from willy.paths import default_paths
+
+
+def test_load_missing_config_returns_defaults(tmp_path: Path) -> None:
+    paths = default_paths(tmp_path)
+
+    config = load_config(paths)
+
+    assert config.repo_path == paths.default_orca_user_dir
+    assert config.orca_user_dir == paths.default_orca_user_dir
+
+
+def test_config_round_trip(tmp_path: Path) -> None:
+    paths = default_paths(tmp_path)
+    config = WillyConfig(
+        orca_user_dir=tmp_path / "orca-user",
+        repo_path=tmp_path / "repo",
+        remote="git@example.com:user/repo.git",
+        branch="main",
+    )
+
+    save_config(paths, config)
+    loaded = load_config(paths)
+
+    assert loaded == config
+
+
+def test_state_round_trip(tmp_path: Path) -> None:
+    paths = default_paths(tmp_path)
+    state = WillyState(last_commit="abc123 test", last_sync_status="ok", daemon_pid=123)
+
+    save_state(paths, state)
+    loaded = load_state(paths)
+
+    assert loaded == state

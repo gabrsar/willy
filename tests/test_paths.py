@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 
 from willy.paths import default_paths, expand_path
@@ -9,7 +11,12 @@ def test_default_paths_are_under_home() -> None:
 
     assert paths.root == home / ".willy"
     assert paths.config_file == home / ".willy" / "config.toml"
-    assert paths.default_orca_user_dir == home / "Library" / "Application Support" / "OrcaSlicer" / "user"
+    if os.name == "nt":
+        assert paths.default_orca_user_dir == home / "AppData" / "Roaming" / "OrcaSlicer" / "user"
+    elif sys.platform == "darwin":
+        assert paths.default_orca_user_dir == home / "Library" / "Application Support" / "OrcaSlicer" / "user"
+    else:
+        assert paths.default_orca_user_dir == home / ".config" / "OrcaSlicer" / "user"
 
 
 def test_expand_path_uses_supplied_home() -> None:

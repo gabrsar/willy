@@ -172,7 +172,10 @@ def setup(
         _abort("--mode must be either `new` or `existing`.")
 
     if not git_available():
-        _abort("Git is not installed. On macOS, run `xcode-select --install` and then run `willy setup` again.")
+        _abort(
+            "Git is not installed. Install Git for your platform, confirm `git` works in a new terminal, "
+            "then run `willy setup` again."
+        )
 
     if not config.orca_user_dir.exists():
         _abort(f"Orca profile directory does not exist: {config.orca_user_dir}")

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from willy.git import config_get, run_git
+from willy.git import config_get_local, run_git
 from willy.operations import save_profile_changes, sync_repo, unsaved_summary
 
 
@@ -16,8 +16,10 @@ def test_save_profile_changes_commits_json_and_sets_identity(tmp_path: Path) -> 
 
     assert result.saved
     assert result.count == 1
-    assert config_get(tmp_path, "user.name") == "Willy"
-    assert config_get(tmp_path, "user.email") == "willy@local"
+    author = run_git(tmp_path, "log", "-1", "--pretty=%an <%ae>").stdout.strip()
+    assert author == "willi <willi@example.com>"
+    assert config_get_local(tmp_path, "user.name") is None
+    assert config_get_local(tmp_path, "user.email") is None
     status = run_git(tmp_path, "status", "--porcelain").stdout
     assert "ABS.json" not in status
     assert "ABS.info" in status

@@ -4,17 +4,17 @@ Local-first Git sync for OrcaSlicer profiles.
 
 Willy watches your OrcaSlicer profile/config directory, saves meaningful changes as Git commits, and syncs them to any normal Git remote. It is meant to replace cloud profile syncing with something boring, inspectable, recoverable, and not tied to one vendor.
 
-Willy is macOS-first right now. Windows and Linux are planned.
+Willy now works for development on macOS, Windows, and Linux. The day-to-day workflow is still being hardened across platforms.
 
 ## Install
 
-One-line install:
+One-line install on macOS/Linux:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/gabrsar/willy/main/scripts/install.sh)"
 ```
 
-The installer clones Willy into `~/.local/share/willy`, creates a virtualenv, installs the CLI, and links `willy` into `~/.local/bin`.
+The shell installer clones Willy into `~/.local/share/willy`, creates a virtualenv, installs the CLI, and links `willy` into `~/.local/bin`.
 
 If your shell cannot find `willy` after install, add this to your shell config:
 
@@ -30,12 +30,44 @@ cd willy
 make setup
 ```
 
+Windows development setup:
+
+```powershell
+git clone https://github.com/gabrsar/willy.git
+cd willy
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 setup
+```
+
+PowerShell development commands:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 test
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 lint
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 run
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 stop
+```
+
 ## What Willy Syncs
 
 By default, Willy watches:
 
 ```text
 ~/Library/Application Support/OrcaSlicer/user
+```
+
+On Windows, Willy defaults to:
+
+```text
+%APPDATA%\OrcaSlicer\user
+```
+
+On Linux, Willy defaults to:
+
+```text
+~/.config/OrcaSlicer/user
 ```
 
 It tracks Orca profile JSON files under both common Orca layouts:
@@ -189,6 +221,8 @@ make setup
 make lint
 make test
 ```
+
+On Windows, use `scripts/dev.ps1` instead of `make`.
 
 ## Safety Model
 

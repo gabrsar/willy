@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +24,10 @@ class WillyPaths:
             path.mkdir(parents=True, exist_ok=True)
 
 
+def path_to_posix(value: str | Path) -> str:
+    return Path(value).as_posix()
+
+
 def expand_path(value: str | Path, *, home: Path | None = None) -> Path:
     home = home or Path.home()
     text = str(value)
@@ -33,9 +39,20 @@ def expand_path(value: str | Path, *, home: Path | None = None) -> Path:
 
 
 def default_paths(home: Path | None = None) -> WillyPaths:
+    supplied_home = home
     home = home or Path.home()
     root = home / ".willy"
     logs_dir = root / "logs"
+    if sys.platform == "win32":
+        if supplied_home is not None:
+            appdata_root = home / "AppData" / "Roaming"
+        else:
+            appdata_root = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+        default_orca_user_dir = appdata_root / "OrcaSlicer" / "user"
+    elif sys.platform == "darwin":
+        default_orca_user_dir = home / "Library" / "Application Support" / "OrcaSlicer" / "user"
+    else:
+        default_orca_user_dir = home / ".config" / "OrcaSlicer" / "user"
     return WillyPaths(
         home=home,
         root=root,
@@ -46,5 +63,5 @@ def default_paths(home: Path | None = None) -> WillyPaths:
         event_log=logs_dir / "events.jsonl",
         backups_dir=root / "backups",
         locks_dir=root / "locks",
-        default_orca_user_dir=home / "Library" / "Application Support" / "OrcaSlicer" / "user",
+        default_orca_user_dir=default_orca_user_dir,
     )

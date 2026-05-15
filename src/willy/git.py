@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -8,6 +9,8 @@ from pathlib import Path
 from willy.errors import GitError
 
 DEFAULT_TIMEOUT_SECONDS = 60
+DEFAULT_COMMIT_AUTHOR_NAME = "willi"
+DEFAULT_COMMIT_AUTHOR_EMAIL = "willi@example.com"
 
 
 @dataclass(frozen=True)
@@ -25,8 +28,24 @@ class GitStatusEntry:
     path: str
 
 
+def _resolve_git_executable() -> str | None:
+    git = shutil.which("git")
+    if git:
+        return git
+    candidates = [
+        Path(os.environ.get("ProgramFiles", "")) / "Git" / "cmd" / "git.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Git" / "bin" / "git.exe",
+        Path(os.environ.get("ProgramW6432", "")) / "Git" / "cmd" / "git.exe",
+        Path(os.environ.get("LocalAppData", "")) / "Programs" / "Git" / "cmd" / "git.exe",
+    ]
+    for candidate in candidates:
+        if str(candidate) and candidate.exists():
+            return str(candidate)
+    return None
+
+
 def git_available() -> bool:
-    return shutil.which("git") is not None
+    return _resolve_git_executable() is not None
 
 
 def run_git(
@@ -34,8 +53,10 @@ def run_git(
     *args: str,
     check: bool = True,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    env: dict[str, str] | None = None,
 ) -> GitResult:
-    command = ("git", *args)
+    git = _resolve_git_executable()
+    command = ((git or "git"), *args)
     try:
         completed = subprocess.run(
             command,
@@ -43,6 +64,7 @@ def run_git(
             text=True,
             capture_output=True,
             timeout=timeout,
+            env=env,
         )
     except FileNotFoundError as exc:
         raise GitError("Git is not installed or is not on PATH.", command=command) from exc
@@ -168,7 +190,7 @@ def commit(path: Path, subject: str, body: str | None = None) -> GitResult:
     args = ["commit", "-m", subject]
     if body:
         args.extend(["-m", body])
-    return run_git(path, *args)
+    return run_git(path, *args, env=commit_identity_env())
 
 
 def has_commits(path: Path) -> bool:
@@ -196,11 +218,17 @@ def config_set(path: Path, key: str, value: str) -> GitResult:
     return run_git(path, "config", key, value)
 
 
-def ensure_commit_identity(path: Path) -> None:
-    if not config_get_local(path, "user.name"):
-        config_set(path, "user.name", "Willy")
-    if not config_get_local(path, "user.email"):
-        config_set(path, "user.email", "willy@local")
+def commit_identity_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": DEFAULT_COMMIT_AUTHOR_NAME,
+            "GIT_AUTHOR_EMAIL": DEFAULT_COMMIT_AUTHOR_EMAIL,
+            "GIT_COMMITTER_NAME": DEFAULT_COMMIT_AUTHOR_NAME,
+            "GIT_COMMITTER_EMAIL": DEFAULT_COMMIT_AUTHOR_EMAIL,
+        }
+    )
+    return env
 
 
 def pull_rebase(path: Path) -> GitResult:

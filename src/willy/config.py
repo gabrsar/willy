@@ -110,10 +110,9 @@ def config_to_toml(config: WillyConfig) -> str:
     lines: list[str] = []
     for key, value in asdict(config).items():
         if isinstance(value, Path):
-            rendered = str(value)
-            lines.append(f'{key} = "{rendered}"')
+            lines.append(f"{key} = {json.dumps(str(value))}")
         elif isinstance(value, str):
-            lines.append(f'{key} = "{value}"')
+            lines.append(f"{key} = {json.dumps(value)}")
         elif value is None:
             continue
         elif isinstance(value, bool):

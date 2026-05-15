@@ -51,7 +51,19 @@ def pid_is_running(pid: int | None) -> bool:
         return False
     except PermissionError:
         return True
+    except OSError:
+        return False
     return True
+
+
+def _stop_pid(pid: int, *, force: bool) -> None:
+    if sys.platform == "win32":
+        command = ["taskkill", "/PID", str(pid), "/T"]
+        if force:
+            command.append("/F")
+        subprocess.run(command, capture_output=True, text=True, check=False, timeout=10)
+        return
+    os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
 
 
 def start_background(paths: WillyPaths, state: WillyState) -> int:
@@ -76,14 +88,14 @@ def stop_background(paths: WillyPaths, state: WillyState, *, timeout_seconds: fl
         save_state(paths, replace(state, daemon_pid=None))
         return False
     assert state.daemon_pid is not None
-    os.kill(state.daemon_pid, signal.SIGTERM)
+    _stop_pid(state.daemon_pid, force=False)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if not pid_is_running(state.daemon_pid):
             save_state(paths, replace(state, daemon_pid=None))
             return True
         time.sleep(0.1)
-    os.kill(state.daemon_pid, signal.SIGKILL)
+    _stop_pid(state.daemon_pid, force=True)
     save_state(paths, replace(state, daemon_pid=None))
     return True
 

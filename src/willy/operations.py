@@ -8,7 +8,6 @@ from willy.git import (
     add_paths,
     commit,
     current_branch,
-    ensure_commit_identity,
     is_repo,
     pull_rebase,
     push,
@@ -61,7 +60,6 @@ def save_profile_changes(repo: Path, *, description: str) -> SaveResult:
     if not unique_paths:
         return SaveResult(saved=False, count=0)
 
-    ensure_commit_identity(repo)
     add_paths(repo, unique_paths)
 
     if len(unique_paths) == 1:

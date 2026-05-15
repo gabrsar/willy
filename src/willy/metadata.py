@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from willy.files import classify_path
+from willy.paths import path_to_posix
 
 MATERIAL_PATTERN = re.compile(r"\b(PLA|PETG|ABS|ASA|TPU|TPE|PA|PC|PVA|HIPS|NYLON|TRITAN)\b", re.I)
 
@@ -104,7 +105,7 @@ def commit_subject(change_type: str, metadata: ProfileMetadata, relative_path: P
             metadata.profile_type,
             metadata.printer_name,
             metadata.filament_type,
-            str(relative_path),
+            path_to_posix(relative_path),
         ]
     )
 
@@ -126,11 +127,11 @@ def commit_body(
             f"Filament: {metadata.filament_type}",
             f"Profile-Type: {metadata.profile_type}",
             f"Event: {event}",
-            f"Path: {relative_path}",
+            f"Path: {path_to_posix(relative_path)}",
         ]
     )
     if changed_paths:
         lines.append("")
         lines.append("Changed paths:")
-        lines.extend(f"- {path}" for path in changed_paths)
+        lines.extend(f"- {path_to_posix(path)}" for path in changed_paths)
     return "\n".join(lines)

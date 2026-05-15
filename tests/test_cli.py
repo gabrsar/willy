@@ -63,7 +63,7 @@ def test_status_shows_next_save_from_state(tmp_path, monkeypatch) -> None:
 
 def test_save_commits_trackable_json_only(tmp_path, monkeypatch) -> None:
     home = tmp_path / "home"
-    repo = home / "Library" / "Application Support" / "OrcaSlicer" / "user"
+    repo = default_paths(home).default_orca_user_dir
     profile = repo / "default" / "filament" / "ABS.json"
     sidecar = repo / "default" / "filament" / "ABS.info"
     profile.parent.mkdir(parents=True)
@@ -87,7 +87,7 @@ def test_save_commits_trackable_json_only(tmp_path, monkeypatch) -> None:
 
 def test_save_syncs_even_when_no_changes(tmp_path, monkeypatch) -> None:
     home = tmp_path / "home"
-    repo = home / "Library" / "Application Support" / "OrcaSlicer" / "user"
+    repo = default_paths(home).default_orca_user_dir
     remote = tmp_path / "remote.git"
     remote.mkdir()
     repo.mkdir(parents=True)
@@ -115,7 +115,7 @@ def test_save_syncs_even_when_no_changes(tmp_path, monkeypatch) -> None:
 
 def test_save_pushes_when_remote_exists(tmp_path, monkeypatch) -> None:
     home = tmp_path / "home"
-    repo = home / "Library" / "Application Support" / "OrcaSlicer" / "user"
+    repo = default_paths(home).default_orca_user_dir
     remote = tmp_path / "remote.git"
     remote.mkdir()
     repo.mkdir(parents=True)
@@ -136,7 +136,7 @@ def test_save_pushes_when_remote_exists(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Saved 1 file(s)." in result.output
     assert "Sync: synced" in result.output
-    remote_log = run_git(remote, "log", "--oneline", check=False).stdout
+    remote_log = run_git(remote, "log", "--oneline", "refs/heads/main", check=False).stdout
     assert "filament" in remote_log
 
 

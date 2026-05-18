@@ -37,7 +37,10 @@ def test_main_no_daemon_flag_launches_tray_without_daemon(monkeypatch) -> None:
 
 
 def test_status_command_runs_with_defaults(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
+    paths = default_paths(tmp_path / "home")
+    monkeypatch.setattr("willy.cli.default_paths", lambda: paths)
+    monkeypatch.setattr("willy.cli.is_orca_running", lambda: False)
+    monkeypatch.setattr("willy.cli.pid_is_running", lambda pid: False)
     runner = CliRunner()
 
     result = runner.invoke(app, ["status"])

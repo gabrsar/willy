@@ -58,7 +58,17 @@ def relative_to_root(root: Path, path: Path) -> Path:
     return path.resolve().relative_to(root.resolve())
 
 
-def classify_path(root: Path, path: Path) -> FileClassification:
+def _is_within(relative_path: Path, candidate_dir: Path) -> bool:
+    if not candidate_dir.parts:
+        return False
+    try:
+        relative_path.relative_to(candidate_dir)
+    except ValueError:
+        return False
+    return True
+
+
+def classify_path(root: Path, path: Path, *, asset_dirs: tuple[Path, ...] = ()) -> FileClassification:
     try:
         relative_path = relative_to_root(root, path)
     except ValueError:
@@ -81,17 +91,28 @@ def classify_path(root: Path, path: Path) -> FileClassification:
     if path.suffix.lower() == ".json":
         return FileClassification(relative_path, True, profile_type, "json profile/config")
 
+    if path.suffix.lower() in {".3mf", ".stl"}:
+        normalized_asset_dirs: list[Path] = []
+        for asset_dir in asset_dirs:
+            try:
+                normalized_asset_dirs.append(relative_to_root(root, asset_dir))
+            except ValueError:
+                continue
+        if any(_is_within(relative_path, asset_dir) for asset_dir in normalized_asset_dirs):
+            return FileClassification(relative_path, True, "asset", "tracked model asset")
+        return FileClassification(relative_path, False, "asset", "model asset outside configured asset directories")
+
     if path.suffix.lower() == ".info":
         return FileClassification(relative_path, False, profile_type, "sidecar metadata not tracked in v1")
 
     return FileClassification(relative_path, False, profile_type, "unsupported file type")
 
 
-def trackable_paths(root: Path) -> list[Path]:
+def trackable_paths(root: Path, *, asset_dirs: tuple[Path, ...] = ()) -> list[Path]:
     if not root.exists():
         return []
     paths: list[Path] = []
     for path in root.rglob("*"):
-        if path.is_file() and classify_path(root, path).trackable:
+        if path.is_file() and classify_path(root, path, asset_dirs=asset_dirs).trackable:
             paths.append(path)
     return sorted(paths)

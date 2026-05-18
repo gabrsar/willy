@@ -47,6 +47,7 @@ PowerShell development commands:
 powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 test
 powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 lint
 powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 run
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 tray
 powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 stop
 ```
 
@@ -84,6 +85,15 @@ default/process/*.json
 
 It intentionally ignores `.info` sidecars, temp files, caches, logs, locks, `.git`, and obvious junk. The first version keeps the tracked surface small and safe.
 
+You can also tell Willy to track model files in one or more folders inside the sync repo:
+
+```text
+<repo>/prints/**/*.3mf
+<repo>/prints/**/*.stl
+```
+
+Add those folders during setup with `--asset-dir`.
+
 ## How It Works
 
 Willy treats your Orca profile directory as a Git repository.
@@ -104,12 +114,13 @@ your Git remote
 The basic flow:
 
 1. `willy setup` connects your Orca profile folder to Git.
-2. Setup asks whether to enable the watcher.
-3. `willy save "message"` commits unsaved profile JSON files and pushes.
-4. `willy start` runs the background watcher if you did not enable it during setup.
-5. While Orca is open, Willy watches for profile changes.
-6. When changes settle, Willy auto-saves them.
-7. When Orca closes, Willy does a final save and sync.
+2. Optional: `willy setup --asset-dir prints` also tracks `.3mf` and `.stl` files under that folder inside the repo.
+3. Setup asks whether to enable the watcher.
+4. `willy save "message"` commits unsaved tracked files and pushes.
+5. `willy start` runs the background watcher if you did not enable it during setup.
+6. While Orca is open, Willy watches for profile changes.
+7. When changes settle, Willy auto-saves them.
+8. When Orca closes, Willy does a final save and sync.
 
 Willy uses normal Git remotes, so it can work with GitHub, GitLab, Gitea, Forgejo, Bitbucket, self-hosted Git, or a local bare repo.
 
@@ -167,6 +178,14 @@ willy setup --mode new --remote git@github.com:you/orca-configs.git
 ```
 
 Willy validates that it can talk to the remote before adopting it.
+
+To also sync model files in a dedicated folder inside the repo:
+
+```bash
+willy setup --mode new --remote git@github.com:you/orca-configs.git --asset-dir prints
+```
+
+`--asset-dir` can be repeated. Each folder must live inside the sync repo.
 
 Setup also decides how to handle sensitive printer connection fields:
 
@@ -244,6 +263,8 @@ Start the macOS status bar icon:
 willy statusbar
 ```
 
+On Windows, the same command opens a tray icon next to the clock.
+
 The status bar item appears while OrcaSlicer is running, or while Willy has profile changes or Git sync work pending. It shows:
 
 - `W` when there are no pending changes
@@ -251,6 +272,8 @@ The status bar item appears while OrcaSlicer is running, or while Willy has prof
 - `W...` while Willy is saving
 
 Click it to see current status, open a detailed status window, force sync/download, or enable/disable daemon startup at login.
+
+On Windows, the tray menu can enable or disable tray startup at login.
 
 If you disable daemon startup, Willy will warn you that automatic syncing will not start after login. You will need to run:
 
@@ -331,10 +354,12 @@ Working:
 - privacy-aware sensitive field redaction
 - existing repo detection
 - remote validation
+- optional `.3mf` / `.stl` sync folders inside the repo
 - SSH key guidance
 - automatic watcher scaffold
 - daemon start/stop
 - macOS status bar icon while OrcaSlicer is active or sync/profile work is pending
+- Windows tray icon with status, force sync, and login startup toggle
 - login startup toggle for the daemon
 - profile JSON detection for `default/...` and `<user_id>/...`
 

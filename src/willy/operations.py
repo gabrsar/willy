@@ -35,7 +35,7 @@ class UnsavedSummary:
     paths: list[Path]
 
 
-def changed_trackable_paths(repo: Path) -> tuple[str, list[Path]]:
+def changed_trackable_paths(repo: Path, *, asset_dirs: tuple[Path, ...] = ()) -> tuple[str, list[Path]]:
     changed_paths: list[Path] = []
     first_event = "modified"
     for entry in status_porcelain(repo):
@@ -43,23 +43,29 @@ def changed_trackable_paths(repo: Path) -> tuple[str, list[Path]]:
         candidates = [part.strip() for part in entry.path.split(" -> ") if part.strip()]
         for candidate in candidates:
             candidate_path = Path(candidate)
-            if classify_path(repo, repo / candidate_path).trackable:
+            if classify_path(repo, repo / candidate_path, asset_dirs=asset_dirs).trackable:
                 changed_paths.append(candidate_path)
                 if len(changed_paths) == 1:
                     first_event = event
     return first_event, sorted(set(changed_paths))
 
 
-def unsaved_summary(repo: Path, *, limit: int = 12) -> UnsavedSummary:
-    _event, paths = changed_trackable_paths(repo)
+def unsaved_summary(repo: Path, *, limit: int = 12, asset_dirs: tuple[Path, ...] = ()) -> UnsavedSummary:
+    _event, paths = changed_trackable_paths(repo, asset_dirs=asset_dirs)
     return UnsavedSummary(count=len(paths), paths=paths[:limit])
 
 
-def save_profile_changes(repo: Path, *, description: str, allow_sensitive: bool = False) -> SaveResult:
+def save_profile_changes(
+    repo: Path,
+    *,
+    description: str,
+    allow_sensitive: bool = False,
+    asset_dirs: tuple[Path, ...] = (),
+) -> SaveResult:
     if not is_repo(repo):
         raise ValueError(f"Not a Git repository: {repo}")
 
-    first_event, unique_paths = changed_trackable_paths(repo)
+    first_event, unique_paths = changed_trackable_paths(repo, asset_dirs=asset_dirs)
     if not unique_paths:
         return SaveResult(saved=False, count=0)
 
@@ -72,7 +78,7 @@ def save_profile_changes(repo: Path, *, description: str, allow_sensitive: bool 
 
     if len(unique_paths) == 1:
         commit_path = unique_paths[0]
-        metadata = extract_metadata(repo, commit_path)
+        metadata = extract_metadata(repo, commit_path, asset_dirs=asset_dirs)
         subject = commit_subject(first_event, metadata, commit_path)
         body = commit_body(
             metadata=metadata,
@@ -82,7 +88,7 @@ def save_profile_changes(repo: Path, *, description: str, allow_sensitive: bool 
         )
     else:
         commit_path = Path(f"{len(unique_paths)} files")
-        metadata = extract_metadata(repo, unique_paths[0])
+        metadata = extract_metadata(repo, unique_paths[0], asset_dirs=asset_dirs)
         subject = commit_subject("mixed", metadata, commit_path)
         body = commit_body(
             metadata=metadata,

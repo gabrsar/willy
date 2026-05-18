@@ -46,7 +46,7 @@ revert Restore an older profile version
 status Show sync health
 
 Usage:
-  willy setup [--mode new|existing] [--remote URL] [--protect-from-bamboo-poachers] [--dry-run]
+  willy setup [--mode new|existing] [--remote URL] [--asset-dir PATH] [--protect-from-bamboo-poachers] [--dry-run]
   willy daemon
   willy statusbar
   willy start
@@ -69,6 +69,27 @@ app = typer.Typer(
 
 def _print_help() -> None:
     typer.echo(HELP_TEXT.rstrip())
+
+
+def _stream_is_tty(stream) -> bool:
+    return bool(stream and hasattr(stream, "isatty") and stream.isatty())
+
+
+def _cli_stdio_available() -> bool:
+    return _stream_is_tty(sys.stdin) and _stream_is_tty(sys.stdout)
+
+
+def _should_launch_tray(argv: list[str]) -> bool:
+    if any(
+        arg in {"setup", "start", "stop", "save", "status", "history", "revert", "help", "daemon", "statusbar"}
+        for arg in argv
+    ):
+        return False
+    if argv == ["--help"] or argv == ["-h"] or argv == ["--version"]:
+        return False
+    if argv == ["--no-daemon"]:
+        return True
+    return not argv and not _cli_stdio_available()
 
 
 def _abort(message: str, *, exit_code: int = 1) -> None:
@@ -152,6 +173,20 @@ def _enable_watcher(paths, *, yes: bool, no_watcher: bool, dry_run: bool) -> Non
     pid = start_background(paths, load_state(paths))
     write_event(paths, "setup_watcher_enabled", pid=pid)
     typer.echo(f"Watcher enabled: pid {pid}")
+
+
+def _resolve_asset_dirs(repo_path: Path, asset_dirs: list[Path] | None) -> tuple[Path, ...]:
+    resolved: list[Path] = []
+    repo_root = repo_path.resolve()
+    for asset_dir in asset_dirs or []:
+        candidate = asset_dir if asset_dir.is_absolute() else repo_path / asset_dir
+        candidate = candidate.resolve()
+        try:
+            candidate.relative_to(repo_root)
+        except ValueError:
+            _abort(f"Asset directory must be inside the sync repo: {candidate}\nSync repo path: {repo_path}")
+        resolved.append(candidate)
+    return tuple(dict.fromkeys(resolved))
 
 
 def _resolve_repo_private(
@@ -238,6 +273,13 @@ def setup(
         bool,
         typer.Option("--public-repo", help="Redact sensitive printer connection fields before Git commits."),
     ] = False,
+    asset_dir: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--asset-dir",
+            help="Track .3mf and .stl files under this directory inside the sync repo. Repeat to add more folders.",
+        ),
+    ] = None,
 ) -> None:
     """Connect OrcaSlicer profiles to Git."""
     paths = default_paths()
@@ -262,6 +304,12 @@ def setup(
 
     if is_orca_running():
         _abort("OrcaSlicer is open. Save your work, close OrcaSlicer, then run `willy setup` again.")
+
+    resolved_asset_dirs = _resolve_asset_dirs(config.repo_path, asset_dir)
+    if resolved_asset_dirs:
+        typer.echo("Tracked asset directories:")
+        for directory in resolved_asset_dirs:
+            typer.echo(f"  {directory}")
 
     existing_repo = is_repo(config.repo_path)
     detected_remote = remote_url(config.repo_path) if existing_repo else None
@@ -312,6 +360,8 @@ def setup(
                 _enable_watcher(paths, yes=yes, no_watcher=no_watcher, dry_run=True)
                 return
 
+            for directory in resolved_asset_dirs:
+                directory.mkdir(parents=True, exist_ok=True)
             save_config(
                 paths,
                 replace(
@@ -320,6 +370,7 @@ def setup(
                     remote=remote or config.remote,
                     protect_from_bamboo_poachers=protect_from_bamboo_poachers or config.protect_from_bamboo_poachers,
                     repo_private=repo_private,
+                    asset_dirs=resolved_asset_dirs or config.asset_dirs,
                 ),
             )
             write_event(paths, "setup_existing_repo", repo=str(config.repo_path), remote=remote)
@@ -362,6 +413,8 @@ def setup(
             typer.echo("Dry run: would validate remote access with Git.")
         if protect_from_bamboo_poachers:
             typer.echo("Dry run: would add AGPL-3.0 protection assets for a new repo.")
+        for directory in resolved_asset_dirs:
+            typer.echo(f"Dry run: would create tracked asset directory: {directory}")
         _enable_watcher(paths, yes=yes, no_watcher=no_watcher, dry_run=True)
         return
 
@@ -395,6 +448,9 @@ def setup(
         else:
             typer.echo("Protection assets already present.")
 
+    for directory in resolved_asset_dirs:
+        directory.mkdir(parents=True, exist_ok=True)
+
     save_config(
         paths,
         type(config)(
@@ -407,6 +463,9 @@ def setup(
             protect_from_bamboo_poachers=protect_from_bamboo_poachers or config.protect_from_bamboo_poachers,
             launchd_enabled=config.launchd_enabled,
             repo_private=repo_private,
+            asset_dirs=resolved_asset_dirs,
+            tray_enabled=config.tray_enabled,
+            show_tray_welcome=config.show_tray_welcome,
         ),
     )
     write_event(paths, "setup", repo=str(config.repo_path), backup=str(backup.path))
@@ -471,12 +530,16 @@ def statusbar(
         float,
         typer.Option("--poll-seconds", help="Seconds between status bar refreshes."),
     ] = 2.0,
+    no_daemon: Annotated[
+        bool,
+        typer.Option("--no-daemon", help="Open the tray/status bar without starting the embedded daemon."),
+    ] = False,
 ) -> None:
-    """Run the macOS status bar icon."""
+    """Run the tray/status bar icon."""
     from willy.statusbar import run_statusbar
 
     try:
-        run_statusbar(poll_seconds=poll_seconds)
+        run_statusbar(poll_seconds=poll_seconds, start_daemon=not no_daemon)
     except RuntimeError as exc:
         _abort(str(exc))
 
@@ -494,7 +557,12 @@ def save(description: Annotated[str, typer.Argument(help="Human description for 
     if not is_repo(repo):
         _abort(f"Sync repo is not a Git repository yet: {repo}. Run `willy setup` first.")
 
-    result = save_profile_changes(repo, description=description, allow_sensitive=bool(config.repo_private))
+    result = save_profile_changes(
+        repo,
+        description=description,
+        allow_sensitive=bool(config.repo_private),
+        asset_dirs=config.asset_dirs,
+    )
     if not result.saved:
         typer.echo("Nothing to save.")
     else:
@@ -526,7 +594,7 @@ def status() -> None:
     branch = current_branch(repo) if repo_ready else None
     remote = remote_url(repo) if repo_ready else None
     changes = status_porcelain(repo) if repo_ready else []
-    unsaved = unsaved_summary(repo) if repo_ready else None
+    unsaved = unsaved_summary(repo, asset_dirs=config.asset_dirs) if repo_ready else None
     last = last_commit(repo) if repo_ready else None
     orca_running = is_orca_running()
 
@@ -540,13 +608,17 @@ def status() -> None:
     typer.echo(f"Git repo: {'yes' if repo_ready else 'no'}")
     typer.echo(f"Git branch: {branch or 'unknown'}")
     typer.echo(f"Remote: {remote or 'none'}")
+    if config.asset_dirs:
+        typer.echo("Tracked asset directories:")
+        for directory in config.asset_dirs:
+            typer.echo(f"  {directory}")
     typer.echo(
         "Sensitive fields: " + ("kept in commits (private repo)" if config.repo_private else "redacted before commit")
     )
     typer.echo(f"Uncommitted changes: {len(changes)}")
-    typer.echo(f"Unsaved configs: {unsaved.count if unsaved else 0}")
+    typer.echo(f"Unsaved tracked files: {unsaved.count if unsaved else 0}")
     if unsaved and unsaved.paths:
-        typer.echo("Unsaved config paths:")
+        typer.echo("Unsaved tracked paths:")
         for path in unsaved.paths:
             typer.echo(f"  {path}")
     daemon_running = pid_is_running(state.daemon_pid)
@@ -611,6 +683,13 @@ Use willy status first when something feels wrong.
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv == ["--daemon"]:
+        daemon()
+        return 0
+    if _should_launch_tray(argv):
+        from willy.statusbar import main as statusbar_main
+
+        return statusbar_main(start_daemon="--no-daemon" not in argv)
     if not argv or argv in (["--help"], ["-h"]):
         _print_help()
         return 0

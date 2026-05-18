@@ -1,7 +1,7 @@
 from typer.testing import CliRunner
 
 from willy.cli import HELP_TEXT, app, main
-from willy.config import WillyState, load_config, save_state
+from willy.config import WillyConfig, WillyState, load_config, save_config, save_state
 from willy.errors import GitError
 from willy.git import is_repo, remote_url, run_git
 from willy.paths import default_paths
@@ -19,6 +19,23 @@ def test_main_help_prints_required_tldr(capsys) -> None:
     assert captured.out.startswith("TL;DR:\nsetup Connect OrcaSlicer profiles to Git")
 
 
+def test_main_without_stdio_launches_tray_mode(monkeypatch) -> None:
+    monkeypatch.setattr("willy.cli._cli_stdio_available", lambda: False)
+    monkeypatch.setattr("willy.statusbar.main", lambda start_daemon=True: 23 if start_daemon else 24)
+
+    exit_code = main([])
+
+    assert exit_code == 23
+
+
+def test_main_no_daemon_flag_launches_tray_without_daemon(monkeypatch) -> None:
+    monkeypatch.setattr("willy.statusbar.main", lambda start_daemon=True: 23 if start_daemon else 24)
+
+    exit_code = main(["--no-daemon"])
+
+    assert exit_code == 24
+
+
 def test_status_command_runs_with_defaults(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     runner = CliRunner()
@@ -29,7 +46,7 @@ def test_status_command_runs_with_defaults(tmp_path, monkeypatch) -> None:
     assert "Willy status" in result.output
     assert "Git repo: no" in result.output
     assert "Sensitive fields: redacted before commit" in result.output
-    assert "Unsaved configs: 0" in result.output
+    assert "Unsaved tracked files: 0" in result.output
     assert "Next save: daemon not running" in result.output
 
 
@@ -182,6 +199,47 @@ def test_setup_initializes_repo_remote_backup_and_protection(tmp_path, monkeypat
     assert list(paths.backups_dir.glob("*/.willy-backup.json"))
     assert load_config(paths).remote == str(remote)
     assert load_config(paths).repo_private is False
+
+
+def test_setup_saves_asset_dir_inside_repo(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    paths = default_paths(home)
+    repo = paths.default_orca_user_dir
+    repo.mkdir(parents=True)
+    monkeypatch.setattr("willy.cli.default_paths", lambda: paths)
+    monkeypatch.setattr("willy.cli.is_orca_running", lambda: False)
+    monkeypatch.setattr("willy.cli.start_background", lambda paths, state: 123)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["setup", "--yes", "--no-watcher", "--asset-dir", "prints"])
+
+    assert result.exit_code == 0
+    assert "Tracked asset directories:" in result.output
+    assert (repo / "prints").exists()
+    assert load_config(paths).asset_dirs == (repo / "prints",)
+
+
+def test_save_tracks_stl_files_inside_asset_dir(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    paths = default_paths(home)
+    repo = paths.default_orca_user_dir
+    asset_dir = repo / "prints"
+    model = asset_dir / "benchy.stl"
+    asset_dir.mkdir(parents=True)
+    model.write_text("solid benchy\n", encoding="utf-8")
+    monkeypatch.setattr("willy.cli.default_paths", lambda: paths)
+    run_git(repo, "init")
+    run_git(repo, "config", "user.email", "test@example.com")
+    run_git(repo, "config", "user.name", "Willy Test")
+    save_config(paths, WillyConfig(orca_user_dir=repo, repo_path=repo, asset_dirs=(asset_dir,)))
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["save", "track model"])
+
+    assert result.exit_code == 0
+    assert "Saved 1 file(s)." in result.output
+    status = run_git(repo, "status", "--porcelain").stdout
+    assert "benchy.stl" not in status
 
 
 def test_setup_existing_repo_defaults_to_yes_and_saves_config(tmp_path, monkeypatch) -> None:

@@ -58,3 +58,21 @@ def test_trackable_paths_returns_json_only(tmp_path: Path) -> None:
     ignored.write_text("setting_id = PPUS\n", encoding="utf-8")
 
     assert trackable_paths(tmp_path) == [tracked]
+
+
+def test_asset_files_are_tracked_only_inside_configured_asset_dirs(tmp_path: Path) -> None:
+    asset_dir = tmp_path / "prints"
+    tracked = asset_dir / "benchy.3mf"
+    ignored = tmp_path / "loose" / "benchy.stl"
+    tracked.parent.mkdir(parents=True)
+    ignored.parent.mkdir(parents=True)
+    tracked.write_text("model\n", encoding="utf-8")
+    ignored.write_text("solid model\n", encoding="utf-8")
+
+    tracked_result = classify_path(tmp_path, tracked, asset_dirs=(asset_dir,))
+    ignored_result = classify_path(tmp_path, ignored, asset_dirs=(asset_dir,))
+
+    assert tracked_result.trackable
+    assert tracked_result.profile_type == "asset"
+    assert not ignored_result.trackable
+    assert trackable_paths(tmp_path, asset_dirs=(asset_dir,)) == [tracked]

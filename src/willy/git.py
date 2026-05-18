@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,6 +58,12 @@ def git_available() -> bool:
     return _resolve_git_executable() is not None
 
 
+def _subprocess_creationflags() -> int:
+    if sys.platform == "win32":
+        return subprocess.CREATE_NO_WINDOW
+    return 0
+
+
 def run_git(
     repo: Path,
     *args: str,
@@ -74,6 +81,7 @@ def run_git(
             capture_output=True,
             timeout=timeout,
             env=env,
+            creationflags=_subprocess_creationflags(),
         )
     except FileNotFoundError as exc:
         raise GitError("Git is not installed or is not on PATH.", command=command) from exc
@@ -206,6 +214,25 @@ def add_remote(path: Path, url: str, name: str = "origin") -> GitResult:
 
 def validate_remote_access(path: Path, url: str) -> GitResult:
     return run_git(path, "ls-remote", url)
+
+
+def remote_refs(path: Path, url: str) -> list[str]:
+    result = run_git(path, "ls-remote", "--heads", url)
+    refs = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            refs.append(parts[1])
+    return refs
+
+
+def clone_remote(parent: Path, url: str, destination: Path, *, branch: str | None = None) -> GitResult:
+    parent.mkdir(parents=True, exist_ok=True)
+    args = ["clone"]
+    if branch:
+        args.extend(["--branch", branch])
+    args.extend([url, str(destination)])
+    return run_git(parent, *args)
 
 
 def add_paths(path: Path, paths: list[Path]) -> GitResult | None:

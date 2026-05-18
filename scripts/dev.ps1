@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("setup", "install", "lint", "test", "run", "stop", "hooks", "clean")]
+    [ValidateSet("setup", "install", "lint", "test", "run", "tray", "build-exe", "stop", "hooks", "clean")]
     [string]$Task = "setup"
 )
 
@@ -12,6 +12,9 @@ $PythonExe = Join-Path $ScriptsDir "python.exe"
 $PytestExe = Join-Path $ScriptsDir "pytest.exe"
 $RuffExe = Join-Path $ScriptsDir "ruff.exe"
 $WillyExe = Join-Path $ScriptsDir "willy.exe"
+$PyInstallerExe = Join-Path $ScriptsDir "pyinstaller.exe"
+$IconPng = Join-Path $RepoRoot "assets\\icon.png"
+$IconIco = Join-Path $RepoRoot "assets\\icon.ico"
 
 function Ensure-Venv {
     if (-not (Test-Path $PythonExe)) {
@@ -49,8 +52,9 @@ set -eu
 powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 test
 '@
 
-    Set-Content -Path (Join-Path $hooksDir "pre-commit") -Value $preCommit -Encoding utf8NoBOM
-    Set-Content -Path (Join-Path $hooksDir "pre-push") -Value $prePush -Encoding utf8NoBOM
+    $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText((Join-Path $hooksDir "pre-commit"), $preCommit, $Utf8NoBom)
+    [System.IO.File]::WriteAllText((Join-Path $hooksDir "pre-push"), $prePush, $Utf8NoBom)
 }
 
 function Clean-Artifacts {
@@ -81,6 +85,33 @@ try {
         "run" {
             Ensure-Venv
             & $WillyExe start
+        }
+        "tray" {
+            Ensure-Venv
+            & $WillyExe statusbar
+        }
+        "build-exe" {
+            Ensure-Venv
+            if ((Test-Path $IconPng) -and -not (Test-Path $IconIco)) {
+                & $PythonExe -c "from PIL import Image; Image.open(r'$IconPng').save(r'$IconIco', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+            }
+            $args = @(
+                "--noconfirm",
+                "--clean",
+                "--onedir",
+                "--windowed",
+                "--name",
+                "WillyTray",
+                "--paths",
+                "src",
+                "--add-data",
+                "assets/icon.png;assets"
+            )
+            if (Test-Path $IconIco) {
+                $args += @("--icon", $IconIco)
+            }
+            $args += ".\\src\\willy\\tray_app.py"
+            & $PyInstallerExe @args
         }
         "stop" {
             Ensure-Venv

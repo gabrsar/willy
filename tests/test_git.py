@@ -1,9 +1,11 @@
 from pathlib import Path
 
 from willy.git import (
+    clone_remote,
     current_branch,
     is_repo,
     last_commit,
+    remote_refs,
     remote_url,
     run_git,
     status_porcelain,
@@ -64,3 +66,27 @@ def test_validate_remote_access_with_local_bare_repo(tmp_path: Path) -> None:
     result = validate_remote_access(work, str(remote))
 
     assert result.returncode == 0
+
+
+def test_remote_refs_and_clone_remote(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    source = tmp_path / "source"
+    clone = tmp_path / "clone"
+    remote.mkdir()
+    source.mkdir()
+    run_git(remote, "init", "--bare")
+    run_git(source, "init")
+    run_git(source, "config", "user.email", "test@example.com")
+    run_git(source, "config", "user.name", "Willy Test")
+    (source / "profile.json").write_text("{}\n", encoding="utf-8")
+    run_git(source, "add", "profile.json")
+    run_git(source, "commit", "-m", "initial")
+    run_git(source, "branch", "-M", "main")
+    run_git(source, "remote", "add", "origin", str(remote))
+    run_git(source, "push", "-u", "origin", "main")
+
+    refs = remote_refs(source, str(remote))
+    clone_remote(tmp_path, str(remote), clone, branch="main")
+
+    assert "refs/heads/main" in refs
+    assert (clone / "profile.json").exists()

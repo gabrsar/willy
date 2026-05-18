@@ -21,6 +21,9 @@ class WillyConfig:
     protect_from_bamboo_poachers: bool = False
     launchd_enabled: bool = False
     repo_private: bool | None = None
+    asset_dirs: tuple[Path, ...] = ()
+    tray_enabled: bool = False
+    show_tray_welcome: bool = True
 
     @classmethod
     def default(cls, paths: WillyPaths) -> WillyConfig:
@@ -49,6 +52,10 @@ class WillyState:
 def _config_from_dict(data: dict[str, Any], paths: WillyPaths) -> WillyConfig:
     default = WillyConfig.default(paths)
     home = paths.home
+    raw_asset_dirs = data.get("asset_dirs", default.asset_dirs)
+    asset_dirs: list[Path] = []
+    if isinstance(raw_asset_dirs, list):
+        asset_dirs = [expand_path(item, home=home) for item in raw_asset_dirs]
     return WillyConfig(
         orca_user_dir=expand_path(data.get("orca_user_dir", default.orca_user_dir), home=home),
         repo_path=expand_path(data.get("repo_path", default.repo_path), home=home),
@@ -64,6 +71,9 @@ def _config_from_dict(data: dict[str, Any], paths: WillyPaths) -> WillyConfig:
         ),
         launchd_enabled=bool(data.get("launchd_enabled", default.launchd_enabled)),
         repo_private=data.get("repo_private", default.repo_private),
+        asset_dirs=tuple(asset_dirs),
+        tray_enabled=bool(data.get("tray_enabled", default.tray_enabled)),
+        show_tray_welcome=bool(data.get("show_tray_welcome", default.show_tray_welcome)),
     )
 
 
@@ -85,7 +95,7 @@ def load_state(paths: WillyPaths) -> WillyState:
     if not paths.state_file.exists():
         return WillyState.empty()
     try:
-        data = json.loads(paths.state_file.read_text(encoding="utf-8"))
+        data = json.loads(paths.state_file.read_text(encoding="utf-8-sig"))
     except OSError as exc:
         raise ConfigError(f"Could not read state: {paths.state_file}") from exc
     except json.JSONDecodeError as exc:
@@ -115,6 +125,12 @@ def config_to_toml(config: WillyConfig) -> str:
     for key, value in asdict(config).items():
         if isinstance(value, Path):
             lines.append(f"{key} = {json.dumps(str(value))}")
+        elif isinstance(value, (list, tuple)):
+            if value and all(isinstance(item, Path) for item in value):
+                rendered = ", ".join(json.dumps(str(item)) for item in value)
+            else:
+                rendered = ", ".join(json.dumps(item) for item in value)
+            lines.append(f"{key} = [{rendered}]")
         elif isinstance(value, str):
             lines.append(f"{key} = {json.dumps(value)}")
         elif value is None:

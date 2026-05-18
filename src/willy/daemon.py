@@ -22,8 +22,9 @@ from willy.paths import WillyPaths
 
 
 class ChangeCollector(FileSystemEventHandler):
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, asset_dirs: tuple[Path, ...] = ()) -> None:
         self.root = root
+        self.asset_dirs = asset_dirs
         self.changed = False
 
     def on_any_event(self, event: FileSystemEvent) -> None:
@@ -33,7 +34,7 @@ class ChangeCollector(FileSystemEventHandler):
         dest_path = getattr(event, "dest_path", "")
         if dest_path:
             paths.append(Path(dest_path))
-        if any(classify_path(self.root, path).trackable for path in paths):
+        if any(classify_path(self.root, path, asset_dirs=self.asset_dirs).trackable for path in paths):
             self.changed = True
 
     def consume(self) -> bool:
@@ -45,13 +46,33 @@ class ChangeCollector(FileSystemEventHandler):
 def pid_is_running(pid: int | None) -> bool:
     if not pid:
         return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32
+            process_query_limited_information = 0x1000
+            still_active = 259
+            kernel32.OpenProcess.restype = ctypes.c_void_p
+            handle = kernel32.OpenProcess(process_query_limited_information, False, int(pid))
+            if not handle:
+                return False
+            exit_code = ctypes.c_ulong()
+            try:
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return False
+                return exit_code.value == still_active
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
-    except OSError:
+    except (OSError, SystemError):
         return False
     return True
 
@@ -61,7 +82,14 @@ def _stop_pid(pid: int, *, force: bool) -> None:
         command = ["taskkill", "/PID", str(pid), "/T"]
         if force:
             command.append("/F")
-        subprocess.run(command, capture_output=True, text=True, check=False, timeout=10)
+        subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
         return
     os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
 
@@ -72,12 +100,25 @@ def start_background(paths: WillyPaths, state: WillyState) -> int:
     paths.ensure_runtime_dirs()
     stdout = paths.logs_dir / "daemon.out.log"
     stderr = paths.logs_dir / "daemon.err.log"
+    creationflags = 0
+    executable = sys.executable
+    args = [executable, "-m", "willy", "daemon"]
+    if getattr(sys, "frozen", False):
+        args = [executable, "--daemon"]
+    if sys.platform == "win32":
+        python = Path(sys.executable)
+        pythonw = python.with_name("pythonw.exe")
+        if not getattr(sys, "frozen", False) and python.name.lower() == "python.exe" and pythonw.exists():
+            executable = str(pythonw)
+            args = [executable, "-m", "willy", "daemon"]
+        creationflags = subprocess.CREATE_NO_WINDOW
     with stdout.open("a", encoding="utf-8") as out, stderr.open("a", encoding="utf-8") as err:
         process = subprocess.Popen(
-            [sys.executable, "-m", "willy", "daemon"],
+            args,
             stdout=out,
             stderr=err,
             start_new_session=True,
+            creationflags=creationflags,
         )
     save_state(paths, replace(state, daemon_pid=process.pid))
     return process.pid
@@ -108,6 +149,7 @@ def _flush(paths: WillyPaths, config: WillyConfig, *, description: str) -> None:
             config.repo_path,
             description=description,
             allow_sensitive=bool(config.repo_private),
+            asset_dirs=config.asset_dirs,
         )
         if result.saved:
             write_event(paths, "daemon_commit", count=result.count, subject=result.subject)
@@ -138,6 +180,7 @@ def run_daemon(
     is_orca_running_func,
     poll_seconds: float = 2.0,
     once: bool = False,
+    stop_event=None,
 ) -> None:
     if not config.repo_path.exists():
         raise WillyError(f"Sync repo path does not exist: {config.repo_path}")
@@ -158,11 +201,13 @@ def run_daemon(
 
         try:
             while True:
+                if stop_event is not None and stop_event.is_set():
+                    return
                 running = bool(is_orca_running_func())
                 now = time.monotonic()
 
                 if running and not was_running:
-                    collector = ChangeCollector(config.repo_path)
+                    collector = ChangeCollector(config.repo_path, asset_dirs=config.asset_dirs)
                     observer = Observer()
                     observer.schedule(collector, str(config.repo_path), recursive=True)
                     observer.start()
@@ -204,7 +249,10 @@ def run_daemon(
                 was_running = running
                 if once and not running:
                     return
-                time.sleep(poll_seconds)
+                if stop_event is not None:
+                    stop_event.wait(poll_seconds)
+                else:
+                    time.sleep(poll_seconds)
         finally:
             if observer:
                 observer.stop()

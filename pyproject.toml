@@ -4,18 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "willy"
-version = "0.1.0"
+version = "0.1.6"
 description = "Local-first Git sync for OrcaSlicer profiles."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "pyobjc-framework-Cocoa>=11.0; sys_platform == 'darwin'",
+  "pillow>=10.0; sys_platform == 'win32'",
+  "pystray>=0.19; sys_platform == 'win32'",
   "typer>=0.12",
   "watchdog>=6.0",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "pyinstaller>=6.0; sys_platform == 'win32'",
   "pytest>=8",
   "ruff>=0.8",
 ]

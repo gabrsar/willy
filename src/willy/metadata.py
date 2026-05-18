@@ -44,9 +44,9 @@ def infer_filament(text: str) -> str:
     return match.group(1).upper()
 
 
-def extract_metadata(root: Path, relative_path: Path) -> ProfileMetadata:
+def extract_metadata(root: Path, relative_path: Path, *, asset_dirs: tuple[Path, ...] = ()) -> ProfileMetadata:
     path = root / relative_path
-    classification = classify_path(root, path)
+    classification = classify_path(root, path, asset_dirs=asset_dirs)
     data = _load_json(path)
     profile_name = (
         _first_string(

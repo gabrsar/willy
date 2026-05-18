@@ -18,9 +18,9 @@ def test_save_profile_changes_commits_json_and_sets_identity(tmp_path: Path) -> 
     assert result.saved
     assert result.count == 1
     author = run_git(tmp_path, "log", "-1", "--pretty=%an <%ae>").stdout.strip()
-    assert author == "willi <willi@example.com>"
-    assert config_get_local(tmp_path, "user.name") is None
-    assert config_get_local(tmp_path, "user.email") is None
+    assert author == "Willy <willy@local>"
+    assert config_get_local(tmp_path, "user.name") == "Willy"
+    assert config_get_local(tmp_path, "user.email") == "willy@local"
     status = run_git(tmp_path, "status", "--porcelain").stdout
     assert "ABS.json" not in status
     assert "ABS.info" in status

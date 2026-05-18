@@ -9,8 +9,6 @@ from pathlib import Path
 from willy.errors import GitError
 
 DEFAULT_TIMEOUT_SECONDS = 60
-DEFAULT_COMMIT_AUTHOR_NAME = "willi"
-DEFAULT_COMMIT_AUTHOR_EMAIL = "willi@example.com"
 
 
 @dataclass(frozen=True)
@@ -42,6 +40,17 @@ def _resolve_git_executable() -> str | None:
         if str(candidate) and candidate.exists():
             return str(candidate)
     return None
+
+
+@dataclass(frozen=True)
+class GitSyncDelta:
+    ahead: int = 0
+    behind: int = 0
+    needs_upstream: bool = False
+
+    @property
+    def pending(self) -> bool:
+        return self.needs_upstream or self.ahead > 0 or self.behind > 0
 
 
 def git_available() -> bool:
@@ -162,6 +171,26 @@ def last_commit(path: Path) -> str | None:
     return text or None
 
 
+def sync_delta(path: Path) -> GitSyncDelta:
+    if not remote_url(path):
+        return GitSyncDelta()
+    if not has_commits(path):
+        return GitSyncDelta()
+    if not upstream_branch(path):
+        return GitSyncDelta(needs_upstream=True)
+    result = run_git(path, "rev-list", "--left-right", "--count", "HEAD...@{u}", check=False)
+    if result.returncode != 0:
+        return GitSyncDelta()
+    parts = result.stdout.strip().split()
+    if len(parts) != 2:
+        return GitSyncDelta()
+    try:
+        ahead, behind = int(parts[0]), int(parts[1])
+    except ValueError:
+        return GitSyncDelta()
+    return GitSyncDelta(ahead=ahead, behind=behind)
+
+
 def init_repo(path: Path) -> GitResult:
     return run_git(path, "init")
 
@@ -186,11 +215,38 @@ def add_paths(path: Path, paths: list[Path]) -> GitResult | None:
     return run_git(path, "add", "--all", "--", *relative)
 
 
+def ensure_redaction_filter(path: Path) -> Path:
+    attributes = path / ".gitattributes"
+    line = "*.json filter=willy-redact"
+    existing = attributes.read_text(encoding="utf-8").splitlines() if attributes.exists() else []
+    if line not in existing:
+        existing.append(line)
+        attributes.write_text("\n".join(existing) + "\n", encoding="utf-8")
+    config_set(path, "filter.willy-redact.clean", f'"{sys.executable}" -m willy.redact --stdin')
+    config_set(path, "filter.willy-redact.smudge", "cat")
+    config_set(path, "filter.willy-redact.required", "true")
+    return attributes
+
+
+def disable_redaction_filter(path: Path) -> Path | None:
+    attributes = path / ".gitattributes"
+    if not attributes.exists():
+        return None
+    lines = [
+        line for line in attributes.read_text(encoding="utf-8").splitlines() if line != "*.json filter=willy-redact"
+    ]
+    attributes.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
+    run_git(path, "config", "--unset-all", "filter.willy-redact.clean", check=False)
+    run_git(path, "config", "--unset-all", "filter.willy-redact.smudge", check=False)
+    run_git(path, "config", "--unset-all", "filter.willy-redact.required", check=False)
+    return attributes
+
+
 def commit(path: Path, subject: str, body: str | None = None) -> GitResult:
     args = ["commit", "-m", subject]
     if body:
         args.extend(["-m", body])
-    return run_git(path, *args, env=commit_identity_env())
+    return run_git(path, *args)
 
 
 def has_commits(path: Path) -> bool:
@@ -218,17 +274,11 @@ def config_set(path: Path, key: str, value: str) -> GitResult:
     return run_git(path, "config", key, value)
 
 
-def commit_identity_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env.update(
-        {
-            "GIT_AUTHOR_NAME": DEFAULT_COMMIT_AUTHOR_NAME,
-            "GIT_AUTHOR_EMAIL": DEFAULT_COMMIT_AUTHOR_EMAIL,
-            "GIT_COMMITTER_NAME": DEFAULT_COMMIT_AUTHOR_NAME,
-            "GIT_COMMITTER_EMAIL": DEFAULT_COMMIT_AUTHOR_EMAIL,
-        }
-    )
-    return env
+def ensure_commit_identity(path: Path) -> None:
+    if not config_get_local(path, "user.name"):
+        config_set(path, "user.name", "Willy")
+    if not config_get_local(path, "user.email"):
+        config_set(path, "user.email", "willy@local")
 
 
 def pull_rebase(path: Path) -> GitResult:

@@ -2,6 +2,7 @@ from pathlib import Path
 
 from willy.git import config_get_local, run_git
 from willy.operations import save_profile_changes, sync_repo, unsaved_summary
+from willy.redact import REDACTED
 
 
 def test_save_profile_changes_commits_json_and_sets_identity(tmp_path: Path) -> None:
@@ -32,6 +33,44 @@ def test_save_profile_changes_clean_repo_returns_unsaved(tmp_path: Path) -> None
 
     assert not result.saved
     assert result.count == 0
+
+
+def test_save_profile_changes_redacts_sensitive_json_by_default(tmp_path: Path) -> None:
+    run_git(tmp_path, "init")
+    profile = tmp_path / "default" / "machine" / "Printer.json"
+    profile.parent.mkdir(parents=True)
+    profile.write_text(
+        '{"name": "Printer", "print_host": "192.168.1.42", "printhost_apikey": "secret-key"}\n',
+        encoding="utf-8",
+    )
+
+    result = save_profile_changes(tmp_path, description="public save")
+
+    assert result.saved
+    blob = run_git(tmp_path, "show", "HEAD:default/machine/Printer.json").stdout
+    assert REDACTED in blob
+    assert "192.168.1.42" not in blob
+    assert "secret-key" not in blob
+    assert "secret-key" in profile.read_text(encoding="utf-8")
+    assert "*.json filter=willy-redact" in run_git(tmp_path, "show", "HEAD:.gitattributes").stdout
+
+
+def test_save_profile_changes_keeps_sensitive_json_when_allowed(tmp_path: Path) -> None:
+    run_git(tmp_path, "init")
+    profile = tmp_path / "default" / "machine" / "Printer.json"
+    profile.parent.mkdir(parents=True)
+    profile.write_text(
+        '{"name": "Printer", "print_host": "192.168.1.42", "printhost_apikey": "secret-key"}\n',
+        encoding="utf-8",
+    )
+
+    result = save_profile_changes(tmp_path, description="private save", allow_sensitive=True)
+
+    assert result.saved
+    blob = run_git(tmp_path, "show", "HEAD:default/machine/Printer.json").stdout
+    assert "192.168.1.42" in blob
+    assert "secret-key" in blob
+    assert run_git(tmp_path, "show", "HEAD:.gitattributes", check=False).returncode != 0
 
 
 def test_unsaved_summary_counts_user_id_profiles(tmp_path: Path) -> None:

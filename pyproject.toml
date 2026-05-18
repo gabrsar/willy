@@ -9,6 +9,7 @@ description = "Local-first Git sync for OrcaSlicer profiles."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "pyobjc-framework-Cocoa>=11.0; sys_platform == 'darwin'",
   "typer>=0.12",
   "watchdog>=6.0",
 ]

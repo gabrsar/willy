@@ -48,6 +48,7 @@ status Show sync health
 Usage:
   willy setup [--mode new|existing] [--remote URL] [--protect-from-bamboo-poachers] [--dry-run]
   willy daemon
+  willy statusbar
   willy start
   willy stop
   willy save "description"
@@ -116,6 +117,73 @@ def _format_next_save(state, *, daemon_running: bool, unsaved_count: int) -> str
     return "no pending save"
 
 
+WATCHER_EXPLANATION = (
+    "Enable Willy watcher? It runs in the background, watches Orca profile changes, "
+    "auto-saves after changes settle, and syncs again when Orca closes."
+)
+
+PRIVACY_EXPLANATION = (
+    "Is this repository private? Willy only commits sensitive printer connection fields "
+    "(like print_host and printhost_apikey) when the repo is private. Public or unknown "
+    "repos get those fields redacted before Git stores them."
+)
+
+PRIVATE_REPO_WARNING = (
+    "WARNING: this repository must not become public. It may contain printer IPs, "
+    "device IDs, API keys, tokens, or other sensitive OrcaSlicer printer data."
+)
+
+
+def _wants_watcher(*, yes: bool, no_watcher: bool) -> bool:
+    if no_watcher:
+        return False
+    if yes:
+        return True
+    return typer.confirm(WATCHER_EXPLANATION, default=True)
+
+
+def _enable_watcher(paths, *, yes: bool, no_watcher: bool, dry_run: bool) -> None:
+    if not _wants_watcher(yes=yes, no_watcher=no_watcher):
+        typer.echo("Watcher not enabled. You can start it later with `willy start`.")
+        return
+    if dry_run:
+        typer.echo("Dry run: would enable the Willy watcher.")
+        return
+    pid = start_background(paths, load_state(paths))
+    write_event(paths, "setup_watcher_enabled", pid=pid)
+    typer.echo(f"Watcher enabled: pid {pid}")
+
+
+def _resolve_repo_private(
+    remote: str | None,
+    *,
+    yes: bool,
+    private_repo: bool,
+    public_repo: bool,
+) -> bool:
+    if private_repo and public_repo:
+        _abort("Use either --private-repo or --public-repo, not both.")
+    if private_repo:
+        typer.echo("Privacy: private repo; sensitive printer fields will be kept.")
+        typer.echo(PRIVATE_REPO_WARNING)
+        return True
+    if public_repo:
+        typer.echo("Privacy: public repo; sensitive printer fields will be redacted before commit.")
+        return False
+
+    if remote:
+        typer.echo("Privacy: Git can validate access, but it cannot prove whether this repo is public or private.")
+    else:
+        typer.echo("Privacy: no remote configured; defaulting to the safer public/unknown policy.")
+    if yes:
+        typer.echo("Privacy: defaulting to redaction. Use --private-repo only if this repo is private.")
+        return False
+    resolved_private = typer.confirm(PRIVACY_EXPLANATION, default=False)
+    if resolved_private:
+        typer.echo(PRIVATE_REPO_WARNING)
+    return resolved_private
+
+
 @app.callback()
 def root(
     ctx: typer.Context,
@@ -157,6 +225,18 @@ def setup(
     yes: Annotated[
         bool,
         typer.Option("--yes", "-y", help="Accept safe setup defaults."),
+    ] = False,
+    no_watcher: Annotated[
+        bool,
+        typer.Option("--no-watcher", help="Do not start the background watcher after setup."),
+    ] = False,
+    private_repo: Annotated[
+        bool,
+        typer.Option("--private-repo", help="Keep sensitive printer connection fields in Git commits."),
+    ] = False,
+    public_repo: Annotated[
+        bool,
+        typer.Option("--public-repo", help="Redact sensitive printer connection fields before Git commits."),
     ] = False,
 ) -> None:
     """Connect OrcaSlicer profiles to Git."""
@@ -211,6 +291,13 @@ def setup(
                 typer.echo(f"Dry run: would configure origin remote: {remote}")
                 typer.echo("Dry run: would validate remote access with Git.")
 
+            repo_private = _resolve_repo_private(
+                remote,
+                yes=yes,
+                private_repo=private_repo,
+                public_repo=public_repo,
+            )
+
             if protect_from_bamboo_poachers and not dry_run:
                 changed = apply_poacher_protection(config.repo_path)
                 if changed:
@@ -222,6 +309,7 @@ def setup(
 
             if dry_run:
                 typer.echo("Dry run: would save this Git repo as Willy's default.")
+                _enable_watcher(paths, yes=yes, no_watcher=no_watcher, dry_run=True)
                 return
 
             save_config(
@@ -231,10 +319,12 @@ def setup(
                     repo_path=config.repo_path,
                     remote=remote or config.remote,
                     protect_from_bamboo_poachers=protect_from_bamboo_poachers or config.protect_from_bamboo_poachers,
+                    repo_private=repo_private,
                 ),
             )
             write_event(paths, "setup_existing_repo", repo=str(config.repo_path), remote=remote)
             typer.echo("Using existing Git repo as Willy's default.")
+            _enable_watcher(paths, yes=yes, no_watcher=no_watcher, dry_run=False)
             return
 
         _abort("Setup cancelled. Willy did not change your config.")
@@ -272,10 +362,18 @@ def setup(
             typer.echo("Dry run: would validate remote access with Git.")
         if protect_from_bamboo_poachers:
             typer.echo("Dry run: would add AGPL-3.0 protection assets for a new repo.")
+        _enable_watcher(paths, yes=yes, no_watcher=no_watcher, dry_run=True)
         return
 
     if remote:
         validate_remote_access(config.repo_path, remote)
+
+    repo_private = _resolve_repo_private(
+        remote,
+        yes=yes,
+        private_repo=private_repo,
+        public_repo=public_repo,
+    )
 
     backup = create_backup(config.orca_user_dir, paths.backups_dir, reason="setup")
     typer.echo(f"Backup created: {backup.path}")
@@ -308,10 +406,12 @@ def setup(
             max_batch_seconds=config.max_batch_seconds,
             protect_from_bamboo_poachers=protect_from_bamboo_poachers or config.protect_from_bamboo_poachers,
             launchd_enabled=config.launchd_enabled,
+            repo_private=repo_private,
         ),
     )
     write_event(paths, "setup", repo=str(config.repo_path), backup=str(backup.path))
     typer.echo("Setup foundation complete.")
+    _enable_watcher(paths, yes=yes, no_watcher=no_watcher, dry_run=False)
 
 
 @app.command()
@@ -366,6 +466,22 @@ def daemon(
 
 
 @app.command()
+def statusbar(
+    poll_seconds: Annotated[
+        float,
+        typer.Option("--poll-seconds", help="Seconds between status bar refreshes."),
+    ] = 2.0,
+) -> None:
+    """Run the macOS status bar icon."""
+    from willy.statusbar import run_statusbar
+
+    try:
+        run_statusbar(poll_seconds=poll_seconds)
+    except RuntimeError as exc:
+        _abort(str(exc))
+
+
+@app.command()
 def save(description: Annotated[str, typer.Argument(help="Human description for this save.")]) -> None:
     """Save current profile changes with a description."""
     paths = default_paths()
@@ -378,7 +494,7 @@ def save(description: Annotated[str, typer.Argument(help="Human description for 
     if not is_repo(repo):
         _abort(f"Sync repo is not a Git repository yet: {repo}. Run `willy setup` first.")
 
-    result = save_profile_changes(repo, description=description)
+    result = save_profile_changes(repo, description=description, allow_sensitive=bool(config.repo_private))
     if not result.saved:
         typer.echo("Nothing to save.")
     else:
@@ -424,6 +540,9 @@ def status() -> None:
     typer.echo(f"Git repo: {'yes' if repo_ready else 'no'}")
     typer.echo(f"Git branch: {branch or 'unknown'}")
     typer.echo(f"Remote: {remote or 'none'}")
+    typer.echo(
+        "Sensitive fields: " + ("kept in commits (private repo)" if config.repo_private else "redacted before commit")
+    )
     typer.echo(f"Uncommitted changes: {len(changes)}")
     typer.echo(f"Unsaved configs: {unsaved.count if unsaved else 0}")
     if unsaved and unsaved.paths:

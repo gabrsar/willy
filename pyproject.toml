@@ -4,10 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "willy"
-version = "0.1.6"
+version = "0.1.7"
 description = "Local-first Git sync for OrcaSlicer profiles."
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "AGPL-3.0-only" }
+authors = [
+  { name = "Gabriel Saraiva", email = "extremez3r0@gmail.com" },
+]
+keywords = ["orcaslicer", "3d-printing", "git", "sync", "tray"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Environment :: Win32 (MS Windows)",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: GNU Affero General Public License v3",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: System :: Archiving :: Backup",
+  "Topic :: Utilities",
+]
 dependencies = [
   "pyobjc-framework-Cocoa>=11.0; sys_platform == 'darwin'",
   "pillow>=10.0; sys_platform == 'win32'",
@@ -25,6 +44,11 @@ dev = [
 
 [project.scripts]
 willy = "willy.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/gabrsar/willy"
+Issues = "https://github.com/gabrsar/willy/issues"
+Source = "https://github.com/gabrsar/willy"
 
 [tool.setuptools.packages.find]
 where = ["src"]

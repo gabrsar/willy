@@ -28,6 +28,7 @@ def test_status_command_runs_with_defaults(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Willy status" in result.output
     assert "Git repo: no" in result.output
+    assert "Sensitive fields: redacted before commit" in result.output
     assert "Unsaved configs: 0" in result.output
     assert "Next save: daemon not running" in result.output
 
@@ -152,6 +153,7 @@ def test_setup_initializes_repo_remote_backup_and_protection(tmp_path, monkeypat
     run_git(remote, "init", "--bare")
     monkeypatch.setattr("willy.cli.default_paths", lambda: paths)
     monkeypatch.setattr("willy.cli.is_orca_running", lambda: False)
+    monkeypatch.setattr("willy.cli.start_background", lambda paths, state: 123)
     runner = CliRunner()
 
     result = runner.invoke(
@@ -172,12 +174,14 @@ def test_setup_initializes_repo_remote_backup_and_protection(tmp_path, monkeypat
     assert "Initialized Git repo." in result.output
     assert "Configured origin remote." in result.output
     assert "Added AGPL-3.0 protection assets." in result.output
+    assert "Watcher enabled: pid 123" in result.output
     assert is_repo(repo)
     assert remote_url(repo) == str(remote)
     assert (repo / "LICENSE").exists()
     assert (repo / "README.md").exists()
     assert list(paths.backups_dir.glob("*/.willy-backup.json"))
     assert load_config(paths).remote == str(remote)
+    assert load_config(paths).repo_private is False
 
 
 def test_setup_existing_repo_defaults_to_yes_and_saves_config(tmp_path, monkeypatch) -> None:
@@ -194,17 +198,22 @@ def test_setup_existing_repo_defaults_to_yes_and_saves_config(tmp_path, monkeypa
     run_git(repo, "remote", "add", "origin", str(remote))
     monkeypatch.setattr("willy.cli.default_paths", lambda: paths)
     monkeypatch.setattr("willy.cli.is_orca_running", lambda: False)
+    monkeypatch.setattr("willy.cli.start_background", lambda paths, state: 456)
     runner = CliRunner()
 
-    result = runner.invoke(app, ["setup"], input="\n")
+    result = runner.invoke(app, ["setup"], input="\n\n\n")
 
     assert result.exit_code == 0
     assert "Existing Git repo found:" in result.output
     assert "Use this Git repo as Willy's default? [Y/n]" in result.output
     assert "Remote access OK." in result.output
+    assert "Privacy: Git can validate access" in result.output
     assert "Using existing Git repo as Willy's default." in result.output
+    assert "Enable Willy watcher?" in result.output
+    assert "Watcher enabled: pid 456" in result.output
     assert load_config(paths).repo_path == repo
     assert load_config(paths).remote == str(remote)
+    assert load_config(paths).repo_private is False
     assert not list(paths.backups_dir.glob("*/.willy-backup.json"))
 
 
@@ -218,15 +227,38 @@ def test_setup_existing_repo_yes_flag_uses_repo_without_prompt(tmp_path, monkeyp
     run_git(repo, "init")
     monkeypatch.setattr("willy.cli.default_paths", lambda: paths)
     monkeypatch.setattr("willy.cli.is_orca_running", lambda: False)
+    monkeypatch.setattr("willy.cli.start_background", lambda paths, state: 789)
     runner = CliRunner()
 
     result = runner.invoke(app, ["setup", "--yes"])
 
     assert result.exit_code == 0
     assert "Using existing Git repo as Willy's default." in result.output
+    assert "Watcher enabled: pid 789" in result.output
     assert "Use this Git repo as Willy's default?" not in result.output
     assert load_config(paths).repo_path == repo
     assert not list(paths.backups_dir.glob("*/.willy-backup.json"))
+
+
+def test_setup_private_repo_flag_keeps_sensitive_config(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    paths = default_paths(home)
+    repo = paths.default_orca_user_dir
+    profile = repo / "default" / "filament" / "ABS.json"
+    profile.parent.mkdir(parents=True)
+    profile.write_text('{"name": "ABS"}\n', encoding="utf-8")
+    run_git(repo, "init")
+    monkeypatch.setattr("willy.cli.default_paths", lambda: paths)
+    monkeypatch.setattr("willy.cli.is_orca_running", lambda: False)
+    monkeypatch.setattr("willy.cli.start_background", lambda paths, state: 789)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["setup", "--yes", "--private-repo", "--no-watcher"])
+
+    assert result.exit_code == 0
+    assert "Privacy: private repo" in result.output
+    assert "WARNING: this repository must not become public." in result.output
+    assert load_config(paths).repo_private is True
 
 
 def test_setup_existing_repo_no_cancels_without_config(tmp_path, monkeypatch) -> None:
@@ -247,6 +279,29 @@ def test_setup_existing_repo_no_cancels_without_config(tmp_path, monkeypatch) ->
     assert "Setup cancelled." in result.output
     assert not paths.config_file.exists()
     assert not list(paths.backups_dir.glob("*/.willy-backup.json"))
+
+
+def test_setup_existing_repo_no_watcher_does_not_start_watcher(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    paths = default_paths(home)
+    repo = paths.default_orca_user_dir
+    profile = repo / "default" / "filament" / "ABS.json"
+    profile.parent.mkdir(parents=True)
+    profile.write_text('{"name": "ABS"}\n', encoding="utf-8")
+    run_git(repo, "init")
+    monkeypatch.setattr("willy.cli.default_paths", lambda: paths)
+    monkeypatch.setattr("willy.cli.is_orca_running", lambda: False)
+
+    def fail_start(*args, **kwargs):
+        raise AssertionError("watcher should not start")
+
+    monkeypatch.setattr("willy.cli.start_background", fail_start)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["setup", "--yes", "--no-watcher"])
+
+    assert result.exit_code == 0
+    assert "Watcher not enabled. You can start it later with `willy start`." in result.output
 
 
 def test_setup_existing_repo_bad_remote_does_not_save_config(tmp_path, monkeypatch) -> None:

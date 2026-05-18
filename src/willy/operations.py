@@ -8,7 +8,9 @@ from willy.git import (
     add_paths,
     commit,
     current_branch,
+    disable_redaction_filter,
     ensure_commit_identity,
+    ensure_redaction_filter,
     is_repo,
     pull_rebase,
     push,
@@ -53,7 +55,7 @@ def unsaved_summary(repo: Path, *, limit: int = 12) -> UnsavedSummary:
     return UnsavedSummary(count=len(paths), paths=paths[:limit])
 
 
-def save_profile_changes(repo: Path, *, description: str) -> SaveResult:
+def save_profile_changes(repo: Path, *, description: str, allow_sensitive: bool = False) -> SaveResult:
     if not is_repo(repo):
         raise ValueError(f"Not a Git repository: {repo}")
 
@@ -62,7 +64,11 @@ def save_profile_changes(repo: Path, *, description: str) -> SaveResult:
         return SaveResult(saved=False, count=0)
 
     ensure_commit_identity(repo)
-    add_paths(repo, unique_paths)
+    stage_paths = list(unique_paths)
+    attributes_path = disable_redaction_filter(repo) if allow_sensitive else ensure_redaction_filter(repo)
+    if attributes_path:
+        stage_paths.append(attributes_path)
+    add_paths(repo, stage_paths)
 
     if len(unique_paths) == 1:
         commit_path = unique_paths[0]

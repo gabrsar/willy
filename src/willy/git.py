@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +24,17 @@ class GitResult:
 class GitStatusEntry:
     code: str
     path: str
+
+
+@dataclass(frozen=True)
+class GitSyncDelta:
+    ahead: int = 0
+    behind: int = 0
+    needs_upstream: bool = False
+
+    @property
+    def pending(self) -> bool:
+        return self.needs_upstream or self.ahead > 0 or self.behind > 0
 
 
 def git_available() -> bool:
@@ -140,6 +152,26 @@ def last_commit(path: Path) -> str | None:
     return text or None
 
 
+def sync_delta(path: Path) -> GitSyncDelta:
+    if not remote_url(path):
+        return GitSyncDelta()
+    if not has_commits(path):
+        return GitSyncDelta()
+    if not upstream_branch(path):
+        return GitSyncDelta(needs_upstream=True)
+    result = run_git(path, "rev-list", "--left-right", "--count", "HEAD...@{u}", check=False)
+    if result.returncode != 0:
+        return GitSyncDelta()
+    parts = result.stdout.strip().split()
+    if len(parts) != 2:
+        return GitSyncDelta()
+    try:
+        ahead, behind = int(parts[0]), int(parts[1])
+    except ValueError:
+        return GitSyncDelta()
+    return GitSyncDelta(ahead=ahead, behind=behind)
+
+
 def init_repo(path: Path) -> GitResult:
     return run_git(path, "init")
 
@@ -162,6 +194,33 @@ def add_paths(path: Path, paths: list[Path]) -> GitResult | None:
         return None
     relative = [str(item.relative_to(path) if item.is_absolute() else item) for item in paths]
     return run_git(path, "add", "--all", "--", *relative)
+
+
+def ensure_redaction_filter(path: Path) -> Path:
+    attributes = path / ".gitattributes"
+    line = "*.json filter=willy-redact"
+    existing = attributes.read_text(encoding="utf-8").splitlines() if attributes.exists() else []
+    if line not in existing:
+        existing.append(line)
+        attributes.write_text("\n".join(existing) + "\n", encoding="utf-8")
+    config_set(path, "filter.willy-redact.clean", f'"{sys.executable}" -m willy.redact --stdin')
+    config_set(path, "filter.willy-redact.smudge", "cat")
+    config_set(path, "filter.willy-redact.required", "true")
+    return attributes
+
+
+def disable_redaction_filter(path: Path) -> Path | None:
+    attributes = path / ".gitattributes"
+    if not attributes.exists():
+        return None
+    lines = [
+        line for line in attributes.read_text(encoding="utf-8").splitlines() if line != "*.json filter=willy-redact"
+    ]
+    attributes.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
+    run_git(path, "config", "--unset-all", "filter.willy-redact.clean", check=False)
+    run_git(path, "config", "--unset-all", "filter.willy-redact.smudge", check=False)
+    run_git(path, "config", "--unset-all", "filter.willy-redact.required", check=False)
+    return attributes
 
 
 def commit(path: Path, subject: str, body: str | None = None) -> GitResult:

@@ -12,7 +12,7 @@ from pathlib import Path
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-from willy.config import WillyConfig, WillyState, save_state
+from willy.config import WillyConfig, WillyState, load_state, save_state
 from willy.errors import WillyError
 from willy.files import classify_path
 from willy.locks import LockError, acquire_lock
@@ -89,9 +89,18 @@ def stop_background(paths: WillyPaths, state: WillyState, *, timeout_seconds: fl
 
 
 def _flush(paths: WillyPaths, config: WillyConfig, *, description: str) -> None:
-    result = save_profile_changes(config.repo_path, description=description)
-    if result.saved:
-        write_event(paths, "daemon_commit", count=result.count, subject=result.subject)
+    state = load_state(paths)
+    save_state(paths, replace(state, active_operation="saving"))
+    try:
+        result = save_profile_changes(
+            config.repo_path,
+            description=description,
+            allow_sensitive=bool(config.repo_private),
+        )
+        if result.saved:
+            write_event(paths, "daemon_commit", count=result.count, subject=result.subject)
+    finally:
+        save_state(paths, replace(load_state(paths), active_operation=None))
 
 
 def _clear_pending(state: WillyState) -> WillyState:

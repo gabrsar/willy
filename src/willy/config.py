@@ -20,6 +20,7 @@ class WillyConfig:
     max_batch_seconds: int = 30
     protect_from_bamboo_poachers: bool = False
     launchd_enabled: bool = False
+    repo_private: bool | None = None
 
     @classmethod
     def default(cls, paths: WillyPaths) -> WillyConfig:
@@ -35,6 +36,7 @@ class WillyState:
     last_sync_at: str | None = None
     last_sync_status: str | None = None
     daemon_pid: int | None = None
+    active_operation: str | None = None
     pending_save_since: str | None = None
     next_save_at: str | None = None
     pending_save_count: int = 0
@@ -61,6 +63,7 @@ def _config_from_dict(data: dict[str, Any], paths: WillyPaths) -> WillyConfig:
             )
         ),
         launchd_enabled=bool(data.get("launchd_enabled", default.launchd_enabled)),
+        repo_private=data.get("repo_private", default.repo_private),
     )
 
 
@@ -94,6 +97,7 @@ def load_state(paths: WillyPaths) -> WillyState:
         last_sync_at=data.get("last_sync_at"),
         last_sync_status=data.get("last_sync_status"),
         daemon_pid=data.get("daemon_pid"),
+        active_operation=data.get("active_operation"),
         pending_save_since=data.get("pending_save_since"),
         next_save_at=data.get("next_save_at"),
         pending_save_count=int(data.get("pending_save_count", 0)),

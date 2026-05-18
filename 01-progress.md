@@ -1,6 +1,6 @@
 # Willy Progress Tracker
 
-Last updated: 2026-05-13
+Last updated: 2026-05-14
 
 This file tracks implementation progress. Keep `00-plan.md` as the architecture/design source of truth, and update this file as work is completed, blocked, or re-scoped.
 
@@ -19,7 +19,7 @@ This file tracks implementation progress. Keep `00-plan.md` as the architecture/
 - Next milestone: conflict-aware pull-rebase/push handling with recovery guidance.
 - Primary platform: macOS first.
 - Later platforms: Windows and Linux after macOS behavior is stable.
-- Repository state: Python package skeleton, CLI foundation, config/state/logging helpers, Git wrapper, file classification, backups, locks, metadata extraction, manual save, setup foundation, remote validation, SSH guidance, protection assets, daemon/start/stop scaffold, watcher batching, Makefile, Git hooks, and tests exist.
+- Repository state: Python package skeleton, CLI foundation, config/state/logging helpers, Git wrapper, file classification, backups, locks, metadata extraction, manual save, setup foundation, remote validation, SSH guidance, protection assets, daemon/start/stop scaffold, watcher batching, privacy-aware redaction, macOS status bar scaffold, login startup toggle, Makefile, Git hooks, and tests exist.
 
 ## Immediate Next Actions
 
@@ -39,8 +39,10 @@ This file tracks implementation progress. Keep `00-plan.md` as the architecture/
 14. [x] Add daemon command and watcher dependencies.
 15. [x] Implement Orca polling watch loop.
 16. [~] Add sync-on-close flow.
-17. [ ] Add conflict-aware sync recovery.
-18. [ ] Implement history command.
+17. [x] Add privacy-aware sensitive field redaction.
+18. [x] Add macOS status bar status/control surface.
+19. [ ] Add conflict-aware sync recovery.
+20. [ ] Implement history command.
 
 ## Phase 0 - Planning
 
@@ -276,8 +278,10 @@ Tasks:
 - [x] Stage allowed profile files only.
 - [x] Commit if meaningful changes exist.
 - [x] Print "nothing to save" when clean.
+- [x] Redact printer connection secrets for public or unknown repos.
+- [x] Preserve printer connection secrets only when repo is marked private.
 - [x] Add tests for status output with temp repos.
-- [~] Add tests for save clean/dirty states.
+- [x] Add tests for save clean/dirty states.
 
 Acceptance criteria:
 
@@ -373,13 +377,19 @@ Goal: make automatic sync easy to keep running on macOS.
 
 Tasks:
 
-- [ ] Generate LaunchAgent plist.
-- [ ] Install plist at `~/Library/LaunchAgents/com.willy.sync.plist`.
-- [ ] Implement `willy start`.
-- [ ] Implement `willy stop`.
-- [ ] Detect loaded/running agent state.
+- [x] Generate LaunchAgent plist.
+- [x] Install plist at `~/Library/LaunchAgents/com.willy.daemon.plist`.
+- [x] Implement `willy start`.
+- [x] Implement `willy stop`.
+- [x] Detect loaded/running agent state.
 - [ ] Show daemon state in `willy status`.
-- [ ] Log launchd install/start/stop actions.
+- [~] Log launchd install/start/stop actions.
+- [x] Add `willy statusbar` for macOS menu bar status/control.
+- [x] Hide status bar item only when OrcaSlicer is closed and no profile/sync work is pending.
+- [x] Show no-pending, pending, and saving status.
+- [x] Keep status bar item visible for unsaved profile changes or known Git sync work.
+- [x] Add force sync/download action.
+- [x] Add daemon startup toggle with disable warning.
 - [ ] Add manual macOS verification checklist.
 
 Acceptance criteria:
@@ -449,6 +459,7 @@ Do not start until macOS flow is stable.
 - [x] v1 stages JSON files only; `.info` and `hints.cereal` are not tracked by default.
 - [x] Setup validates remotes using Git CLI only.
 - [x] Setup protection uses AGPL-3.0 only, not a custom anti-company license.
+- [x] Sensitive printer fields are committed only when the repo is marked private; public/unknown defaults to redaction.
 
 ## Verification Log
 
@@ -482,6 +493,11 @@ YYYY-MM-DD HH:mm | command/check | result | notes
 2026-05-13 19:10 | .venv/bin/willy status | pass | next save reports daemon wait state when no pending event exists
 2026-05-13 19:20 | bash -n scripts/install.sh | pass | installer syntax valid
 2026-05-13 19:20 | make lint && make test | pass | README/package metadata and installer added; 50 tests passed
+2026-05-13 19:30 | make lint && make test | pass | setup now offers watcher by default; 51 tests passed
+2026-05-13 20:05 | make lint | pass | privacy-aware redaction changes lint clean
+2026-05-13 20:05 | make test | pass | 56 tests passed; public/unknown repos redact sensitive fields
+2026-05-14 12:44 | make lint | pass | status bar and launchd additions lint clean
+2026-05-14 12:44 | make test | pass | 61 tests passed; status snapshots, force sync, and launchd plist covered
 ```
 
 ## Change Log
@@ -499,3 +515,6 @@ YYYY-MM-DD HH:mm | command/check | result | notes
 - 2026-05-13: Status now reports unsaved configs, Git status parsing handles spaces, and user-id Orca profile folders are tracked.
 - 2026-05-13: Added pending autosave state fields, next-save status output, and manual-save sync timestamp recording.
 - 2026-05-13: Added polished README, one-line installer script, and switched package readme metadata to README.md.
+- 2026-05-13: Setup now explains and offers enabling the background watcher by default, with `--no-watcher` opt-out.
+- 2026-05-13: Added repo privacy config and Git clean-filter redaction for sensitive printer connection fields.
+- 2026-05-14: Added macOS status bar command, status snapshots, force sync/download action, and daemon startup toggle plumbing.

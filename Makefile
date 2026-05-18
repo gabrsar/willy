@@ -68,4 +68,6 @@ hooks:
 
 clean:
 	rm -rf .pytest_cache
+	rm -rf build dist
+	rm -f WillyTray.spec
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

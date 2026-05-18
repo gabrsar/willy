@@ -263,7 +263,11 @@ Start the macOS status bar icon:
 willy statusbar
 ```
 
-On Windows, the same command opens a tray icon next to the clock.
+On Windows, the same command opens a tray icon next to the clock. The built tray executable is:
+
+```text
+dist/WillyTray/WillyTray.exe
+```
 
 The status bar item appears while OrcaSlicer is running, or while Willy has profile changes or Git sync work pending. It shows:
 
@@ -271,9 +275,22 @@ The status bar item appears while OrcaSlicer is running, or while Willy has prof
 - `W*` when Willy sees pending profile changes or sync/download work
 - `W...` while Willy is saving
 
-Click it to see current status, open a detailed status window, force sync/download, or enable/disable daemon startup at login.
+Right-click it to see current status, open a detailed status window, copy status, force sync/download, configure settings, or enable/disable tray startup at login.
 
-On Windows, the tray menu can enable or disable tray startup at login.
+Opening the Windows tray executable again while Willy is already running opens the settings window instead of starting a second copy.
+
+The settings window configures:
+
+- Orca profile directory
+- Git repository directory
+- Git remote and branch
+- public/private sensitive-field policy
+- `.3mf` / `.stl` project folder
+- debounce and batch timing
+- startup behavior
+- tray welcome popup
+
+When the Git repo or remote changes, Willy validates remote access before saving. If the remote already contains branches, Willy asks whether to download/clone that content into the selected repo folder.
 
 If you disable daemon startup, Willy will warn you that automatic syncing will not start after login. You will need to run:
 
@@ -317,6 +334,35 @@ make test
 
 On Windows, use `scripts/dev.ps1` instead of `make`.
 
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 setup
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 lint
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 test
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 build-exe
+```
+
+## Project Structure
+
+```text
+src/willy/cli.py              command-line interface
+src/willy/config.py           persisted config and daemon state
+src/willy/daemon.py           filesystem watcher and save loop
+src/willy/git.py              Git subprocess wrapper
+src/willy/operations.py       save/sync orchestration
+src/willy/statusbar.py        tray/status-bar orchestration
+src/willy/tray_settings.py    Windows settings UI and config workflow
+tests/                        pytest suite
+docs/architecture.md          contributor architecture notes
+```
+
+Contributing and security notes:
+
+```text
+CONTRIBUTING.md
+SECURITY.md
+LICENSE
+```
+
 ## Safety Model
 
 Willy is intentionally conservative.
@@ -359,7 +405,10 @@ Working:
 - automatic watcher scaffold
 - daemon start/stop
 - macOS status bar icon while OrcaSlicer is active or sync/profile work is pending
-- Windows tray icon with status, force sync, and login startup toggle
+- Windows tray icon with status, copy status, force sync, settings UI, and login startup toggle
+- duplicate Windows tray launches open settings instead of spawning another process
+- Windows tray executable build via PyInstaller
+- Git remote validation and optional remote clone from the settings UI
 - login startup toggle for the daemon
 - profile JSON detection for `default/...` and `<user_id>/...`
 
@@ -369,7 +418,7 @@ Still being hardened:
 - history view
 - revert/restore
 - launchd recovery/status polish
-- Windows/Linux support
+- Linux desktop tray support
 
 ## Uninstall
 

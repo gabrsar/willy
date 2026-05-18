@@ -59,6 +59,9 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 test
 
 function Clean-Artifacts {
     Remove-Item -LiteralPath (Join-Path $RepoRoot ".pytest_cache") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $RepoRoot "build") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $RepoRoot "dist") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $RepoRoot "WillyTray.spec") -Force -ErrorAction SilentlyContinue
     Get-ChildItem -Path $RepoRoot -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 }
 

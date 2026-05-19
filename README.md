@@ -1,10 +1,72 @@
 # Willy
 
-Local-first Git sync for OrcaSlicer profiles.
+Willy is local-first Git sync for OrcaSlicer profiles.
 
-Willy watches your OrcaSlicer profile/config directory, saves meaningful changes as Git commits, and syncs them to any normal Git remote. It is meant to replace cloud profile syncing with something boring, inspectable, recoverable, and not tied to one vendor.
+Tweet version: Willy watches your OrcaSlicer profile folder, commits meaningful config changes to Git, and syncs them to your own remote so printer profiles stay inspectable, recoverable, and vendor-independent.
 
-Willy now works for development on macOS, Windows, and Linux. The day-to-day workflow is still being hardened across platforms.
+## Quick Start
+
+```bash
+git clone https://github.com/gabrsar/willy.git
+cd willy
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+willy --help
+```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/gabrsar/willy.git
+cd willy
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 setup
+.\.venv\Scripts\willy.exe --help
+```
+
+## Build, Test, Run
+
+With `just`:
+
+```bash
+just setup
+just lint
+just test
+just run
+just stop
+```
+
+Windows:
+
+```powershell
+just setup-windows
+just lint-windows
+just test-windows
+just build-windows-exe
+```
+
+Without `just`, use `make` on macOS/Linux or `scripts/dev.ps1` on Windows.
+
+## Docker Dev Environments
+
+Use Docker when you do not want Python tooling installed on the host.
+
+```bash
+just test-docker linux
+just test-docker macos
+just test-docker windows
+```
+
+Dockerfiles live in `deps/docker/`:
+
+```text
+deps/docker/Dockerfile.linux
+deps/docker/Dockerfile.macos
+deps/docker/Dockerfile.windows
+```
+
+`Dockerfile.macos` is for macOS hosts, but it runs a Linux container because Docker does not provide native macOS containers. Validate macOS-only status bar behavior on macOS when changing it.
 
 ## Install
 
@@ -14,429 +76,55 @@ One-line install on macOS/Linux:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/gabrsar/willy/main/scripts/install.sh)"
 ```
 
-The shell installer clones Willy into `~/.local/share/willy`, creates a virtualenv, installs the CLI, and links `willy` into `~/.local/bin`.
-
-If your shell cannot find `willy` after install, add this to your shell config:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
 Manual install:
-
-```bash
-git clone https://github.com/gabrsar/willy.git
-cd willy
-make setup
-```
-
-Windows development setup:
-
-```powershell
-git clone https://github.com/gabrsar/willy.git
-cd willy
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 setup
-```
-
-PowerShell development commands:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 test
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 lint
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 run
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 tray
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 stop
-```
-
-## What Willy Syncs
-
-By default, Willy watches:
-
-```text
-~/Library/Application Support/OrcaSlicer/user
-```
-
-On Windows, Willy defaults to:
-
-```text
-%APPDATA%\OrcaSlicer\user
-```
-
-On Linux, Willy defaults to:
-
-```text
-~/.config/OrcaSlicer/user
-```
-
-It tracks Orca profile JSON files under both common Orca layouts:
-
-```text
-default/filament/*.json
-default/machine/*.json
-default/process/*.json
-
-<user_id>/filament/*.json
-<user_id>/machine/*.json
-<user_id>/process/*.json
-```
-
-It intentionally ignores `.info` sidecars, temp files, caches, logs, locks, `.git`, and obvious junk. The first version keeps the tracked surface small and safe.
-
-You can also tell Willy to track model files in one or more folders inside the sync repo:
-
-```text
-<repo>/prints/**/*.3mf
-<repo>/prints/**/*.stl
-```
-
-Add those folders during setup with `--asset-dir`.
-
-## How It Works
-
-Willy treats your Orca profile directory as a Git repository.
-
-```text
-OrcaSlicer profile files
-        |
-        v
-Willy watcher / CLI
-        |
-        v
-local Git commits
-        |
-        v
-your Git remote
-```
-
-The basic flow:
-
-1. `willy setup` connects your Orca profile folder to Git.
-2. Optional: `willy setup --asset-dir prints` also tracks `.3mf` and `.stl` files under that folder inside the repo.
-3. Setup asks whether to enable the watcher.
-4. `willy save "message"` commits unsaved tracked files and pushes.
-5. `willy start` runs the background watcher if you did not enable it during setup.
-6. While Orca is open, Willy watches for profile changes.
-7. When changes settle, Willy auto-saves them.
-8. When Orca closes, Willy does a final save and sync.
-
-Willy uses normal Git remotes, so it can work with GitHub, GitLab, Gitea, Forgejo, Bitbucket, self-hosted Git, or a local bare repo.
-
-## Privacy
-
-Some Orca printer profiles can include connection details such as `print_host`, `printhost_apikey`, tokens, passwords, or other secret-like fields.
-
-Willy's default is conservative:
-
-- private repo: sensitive fields are kept in commits
-- public repo: sensitive fields are redacted before Git stores them
-- unknown repo privacy: sensitive fields are redacted before Git stores them
-
-This redaction happens through a local Git clean filter. Your real Orca files are not modified, so OrcaSlicer still keeps the printer data it needs on your machine.
-
-Git itself can validate that Willy can talk to a remote, but it cannot prove whether that remote is public or private. During setup, Willy asks and stores your answer. You can also be explicit:
-
-```bash
-willy setup --private-repo
-willy setup --public-repo
-```
-
-Use `--private-repo` only for a repository you trust to store printer IPs and API keys.
-
-If you choose `--private-repo`, treat the repository as permanently sensitive:
-
-```text
-THIS REPOSITORY MUST NOT BECOME PUBLIC.
-```
-
-It may contain printer IPs, device IDs, API keys, tokens, or other sensitive OrcaSlicer printer data. Making it public later can expose secrets that were already committed in Git history.
-
-## First Setup
-
-Close OrcaSlicer before setup. Willy refuses setup while Orca is open so it does not race profile writes.
-
-Use an existing profile repo:
 
 ```bash
 willy setup
 ```
 
-If Willy finds an existing Git repo in your Orca profile directory, it asks:
-
-```text
-Use this Git repo as Willy's default? [Y/n]
-```
-
-The default is yes.
-
-Create/connect a new repo:
-
-```bash
-willy setup --mode new --remote git@github.com:you/orca-configs.git
-```
-
-Willy validates that it can talk to the remote before adopting it.
-
-To also sync model files in a dedicated folder inside the repo:
-
-```bash
-willy setup --mode new --remote git@github.com:you/orca-configs.git --asset-dir prints
-```
-
-`--asset-dir` can be repeated. Each folder must live inside the sync repo.
-
-Setup also decides how to handle sensitive printer connection fields:
-
-```text
-Is this repository private? Willy only commits sensitive printer connection fields (like print_host and printhost_apikey) when the repo is private. Public or unknown repos get those fields redacted before Git stores them. [y/N]
-```
-
-At the end of setup, Willy asks whether to enable the watcher:
-
-```text
-Enable Willy watcher? It runs in the background, watches Orca profile changes, auto-saves after changes settle, and syncs again when Orca closes. [Y/n]
-```
-
-The default is yes. To opt out:
-
-```bash
-willy setup --no-watcher
-```
-
-If you need an SSH key:
-
-```bash
-willy setup --mode new --remote git@github.com:you/orca-configs.git --generate-ssh-key
-```
-
-Willy prints the public key and tells you to add it to your Git host.
-
-Optional whale nonsense, standard license:
-
-```bash
-willy setup --mode new --protect-from-bamboo-poachers
-```
-
-This adds AGPL-3.0 protection assets. It does not create a custom license.
-
 ## Daily Use
 
-Show sync health:
-
 ```bash
+willy setup
 willy status
-```
-
-Status shows:
-
-- whether Orca is running
-- watched directory
-- repo path
-- branch and remote
-- sensitive field policy
-- unsaved config count
-- preview of unsaved config paths
-- daemon status
-- next automatic save
-- last commit
-- last sync
-
-Manually save and push:
-
-```bash
-willy save "tuned ABS and PETG profiles"
-```
-
-`willy save` always syncs. If there are no new changes, it still pushes/pulls when a remote exists.
-
-Start automatic saving:
-
-```bash
+willy save "tuned ABS profile"
 willy start
-```
-
-Start the macOS status bar icon:
-
-```bash
-willy statusbar
-```
-
-On Windows, the same command opens a tray icon next to the clock. The built tray executable is:
-
-```text
-dist/WillyTray/WillyTray.exe
-```
-
-The status bar item appears while OrcaSlicer is running, or while Willy has profile changes or Git sync work pending. It shows:
-
-- `W` when there are no pending changes
-- `W*` when Willy sees pending profile changes or sync/download work
-- `W...` while Willy is saving
-
-Right-click it to see current status, open a detailed status window, copy status, force sync/download, configure settings, or enable/disable tray startup at login.
-
-Opening the Windows tray executable again while Willy is already running opens the settings window instead of starting a second copy.
-
-The settings window configures:
-
-- Orca profile directory
-- Git repository directory
-- Git remote and branch
-- public/private sensitive-field policy
-- `.3mf` / `.stl` project folder
-- debounce and batch timing
-- startup behavior
-- tray welcome popup
-
-When the Git repo or remote changes, Willy validates remote access before saving. If the remote already contains branches, Willy asks whether to download/clone that content into the selected repo folder.
-
-If you disable daemon startup, Willy will warn you that automatic syncing will not start after login. You will need to run:
-
-```bash
-willy start
-```
-
-Stop automatic saving:
-
-```bash
 willy stop
 ```
 
-Watch logs:
+On macOS, `willy statusbar` opens the status bar app. On Windows, the same command opens the tray app.
 
-```bash
-tail -f ~/.willy/logs/events.jsonl
-```
+## What Willy Tracks
 
-## Important Commands
+By default, Willy watches the OrcaSlicer user profile directory:
 
 ```text
-willy setup      Connect OrcaSlicer profiles to Git
-willy start      Start automatic syncing
-willy stop       Stop automatic syncing
-willy statusbar  Show macOS status bar sync controls
-willy save       Save changes with a description and push
-willy status     Show sync health
-willy history    Show profile history (planned)
-willy revert     Restore older profile versions (planned)
+macOS:   ~/Library/Application Support/OrcaSlicer/user
+Windows: %APPDATA%\OrcaSlicer\user
+Linux:   ~/.config/OrcaSlicer/user
 ```
 
-Development commands:
+It tracks Orca profile JSON files under `default/` and user profile folders, and can optionally track `.3mf` and `.stl` files inside configured project folders.
 
-```bash
-make help
-make setup
-make lint
-make test
-```
+## Safety
 
-On Windows, use `scripts/dev.ps1` instead of `make`.
+- Setup refuses to run while OrcaSlicer is open.
+- Setup creates backups before touching profile data.
+- Public or unknown repositories get sensitive printer fields redacted before Git stores them.
+- Git remotes are validated before adoption.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 setup
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 lint
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 test
-powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 build-exe
-```
+State, logs, and backups live under `~/.willy`.
 
 ## Project Structure
 
 ```text
-src/willy/cli.py              command-line interface
-src/willy/config.py           persisted config and daemon state
-src/willy/daemon.py           filesystem watcher and save loop
-src/willy/git.py              Git subprocess wrapper
-src/willy/operations.py       save/sync orchestration
-src/willy/statusbar.py        tray/status-bar orchestration
-src/willy/tray_settings.py    Windows settings UI and config workflow
-tests/                        pytest suite
-docs/architecture.md          contributor architecture notes
+src/willy/                 application code
+tests/                     pytest suite
+docs/architecture.md       architecture notes
+docs/ai/                   AI prompts
+docs/decision_records/     project decision records
+ai.md                      AI agent guidelines
+deps/docker/               dev Dockerfiles
+justfile                   task runner
 ```
 
-Contributing and security notes:
-
-```text
-CONTRIBUTING.md
-SECURITY.md
-LICENSE
-```
-
-## Safety Model
-
-Willy is intentionally conservative.
-
-- Setup refuses to run while OrcaSlicer is open.
-- Setup creates backups before touching profile data.
-- Bad remotes fail before config is saved or repos are mutated.
-- Existing repos are detected and adopted only after confirmation.
-- Remote access is validated before adoption.
-- Only JSON profile/config files are staged by default.
-- Sensitive printer connection fields are redacted for public or unknown repositories.
-- Git errors are shown as recovery-oriented messages, not Python tracebacks.
-
-Backups live under:
-
-```text
-~/.willy/backups
-```
-
-State and logs live under:
-
-```text
-~/.willy/config.toml
-~/.willy/state.json
-~/.willy/logs
-```
-
-## Current Status
-
-Working:
-
-- setup
-- status
-- manual save + push
-- privacy-aware sensitive field redaction
-- existing repo detection
-- remote validation
-- optional `.3mf` / `.stl` sync folders inside the repo
-- SSH key guidance
-- automatic watcher scaffold
-- daemon start/stop
-- macOS status bar icon while OrcaSlicer is active or sync/profile work is pending
-- Windows tray icon with status, copy status, force sync, settings UI, and login startup toggle
-- duplicate Windows tray launches open settings instead of spawning another process
-- Windows tray executable build via PyInstaller
-- Git remote validation and optional remote clone from the settings UI
-- login startup toggle for the daemon
-- profile JSON detection for `default/...` and `<user_id>/...`
-
-Still being hardened:
-
-- conflict recovery UX
-- history view
-- revert/restore
-- launchd recovery/status polish
-- Linux desktop tray support
-
-## Uninstall
-
-Stop the daemon first:
-
-```bash
-willy stop
-```
-
-Then remove the installed app files:
-
-```bash
-rm -rf ~/.local/share/willy
-rm -f ~/.local/bin/willy
-```
-
-Willy state/backups are kept in `~/.willy`. Remove them only if you are sure:
-
-```bash
-rm -rf ~/.willy
-```

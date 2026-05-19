@@ -1,0 +1,19 @@
+FROM python:3.12-windowsservercore-ltsc2022
+
+SHELL ["powershell", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command"]
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR C:/workspace
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY tests ./tests
+COPY assets ./assets
+COPY scripts ./scripts
+
+RUN python -m pip install --upgrade pip; python -m pip install -e ".[dev]"
+
+CMD ["pytest"]
+

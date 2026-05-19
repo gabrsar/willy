@@ -21,6 +21,7 @@ from willy.statusbar import (
     snapshot,
     suggested_project_folder,
 )
+from willy.tray_settings import choose_existing_directory, folder_dialog_initial_dir
 
 
 def _configured_repo(tmp_path: Path):
@@ -271,6 +272,52 @@ def test_suggested_project_folder_uses_projects_under_repo(tmp_path) -> None:
     config = load_config(paths)
 
     assert suggested_project_folder(config) == repo / "projects"
+
+
+def test_folder_dialog_initial_dir_prefers_existing_current_path(tmp_path) -> None:
+    current = tmp_path / "current"
+    fallback = tmp_path / "fallback"
+    current.mkdir()
+    fallback.mkdir()
+
+    assert folder_dialog_initial_dir(current, fallback) == current
+
+
+def test_folder_dialog_initial_dir_uses_existing_fallback(tmp_path) -> None:
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+
+    assert folder_dialog_initial_dir(tmp_path / "missing", fallback) == fallback
+
+
+def test_choose_existing_directory_uses_system_dialog(tmp_path) -> None:
+    fallback = tmp_path / "fallback"
+    selected = tmp_path / "selected"
+    fallback.mkdir()
+    selected.mkdir()
+    calls = []
+
+    class FakeFileDialog:
+        @staticmethod
+        def askdirectory(**kwargs):
+            calls.append(kwargs)
+            return str(selected)
+
+    assert choose_existing_directory(
+        FakeFileDialog,
+        parent="window",
+        title="Choose folder",
+        current=tmp_path / "missing",
+        fallback=fallback,
+    ) == str(selected)
+    assert calls == [
+        {
+            "parent": "window",
+            "title": "Choose folder",
+            "initialdir": str(fallback),
+            "mustexist": True,
+        }
+    ]
 
 
 def test_dismiss_tray_welcome_persists_preference(tmp_path) -> None:

@@ -4,6 +4,7 @@ import traceback
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from willy import __version__
 from willy.config import WillyConfig, load_config, save_config
@@ -49,6 +50,33 @@ def clear_project_folder(paths: WillyPaths) -> str:
     save_config(paths, replace(config, asset_dirs=()))
     write_event(paths, "statusbar_project_folder_cleared")
     return "Files and projects folder cleared."
+
+
+def folder_dialog_initial_dir(current: str | Path | None, fallback: str | Path) -> Path:
+    initial = Path(str(current or "").strip().strip('"')).expanduser()
+    if initial.exists():
+        return initial
+    fallback_path = Path(fallback).expanduser()
+    if fallback_path.exists():
+        return fallback_path
+    return Path.home()
+
+
+def choose_existing_directory(
+    filedialog_module: Any,
+    *,
+    parent: Any,
+    title: str,
+    current: str | Path | None,
+    fallback: str | Path,
+) -> str | None:
+    selected = filedialog_module.askdirectory(
+        parent=parent,
+        title=title,
+        initialdir=str(folder_dialog_initial_dir(current, fallback)),
+        mustexist=True,
+    )
+    return selected or None
 
 
 def configure_repository(
@@ -163,7 +191,7 @@ def show_settings_window(
     startup_enabled: Callable[[WillyPaths, WillyConfig], bool],
     set_startup_enabled: Callable[[WillyPaths, WillyConfig, bool], str],
 ) -> None:
-    from tkinter import BOTH, BooleanVar, Canvas, Frame, Label, StringVar, Tk, messagebox, ttk
+    from tkinter import BOTH, BooleanVar, Canvas, Frame, Label, StringVar, Tk, filedialog, messagebox, ttk
 
     config = load_config(paths)
     startup_was_enabled = startup_enabled(paths, config)
@@ -255,7 +283,7 @@ def show_settings_window(
 
     canvas.bind_all("<MouseWheel>", on_mousewheel)
 
-    status_var = StringVar(value="Edit paths directly. Native folder dialogs are intentionally not used here.")
+    status_var = StringVar(value="Use Browse to choose folders with the system dialog, or edit paths directly.")
     orca_var = StringVar(value=str(config.orca_user_dir))
     repo_var = StringVar(value=str(config.repo_path))
     remote_var = StringVar(value=config.remote or remote_url(config.repo_path) or "")
@@ -313,11 +341,27 @@ def show_settings_window(
         for text, command in buttons:
             ttk.Button(row, text=text, command=command, style="Willy.TButton").pack(side="left", padx=(0, 8))
 
+    def browse_folder(variable: StringVar, title: str, fallback: str | Path) -> None:
+        selected = choose_existing_directory(
+            filedialog,
+            parent=window,
+            title=title,
+            current=variable.get(),
+            fallback=fallback,
+        )
+        if selected:
+            variable.set(selected)
+            status_var.set("Folder selected. Click Save Settings to apply it.")
+
     paths_card = card("Paths", "These folders define where Willy reads Orca data and where the Git repository lives.")
     field(paths_card, "Orca profile directory", orca_var)
     button_row(
         paths_card,
         (
+            (
+                "Browse...",
+                lambda: browse_folder(orca_var, "Choose Orca profile directory", paths.default_orca_user_dir),
+            ),
             ("Use Orca Default", lambda: orca_var.set(str(paths.default_orca_user_dir))),
             ("Use Repo Folder", lambda: orca_var.set(repo_var.get())),
         ),
@@ -326,6 +370,7 @@ def show_settings_window(
     button_row(
         paths_card,
         (
+            ("Browse...", lambda: browse_folder(repo_var, "Choose repository folder", config.repo_path)),
             ("Use Orca Folder", lambda: repo_var.set(orca_var.get())),
             ("Use Orca Default", lambda: repo_var.set(str(paths.default_orca_user_dir))),
         ),
@@ -382,6 +427,14 @@ def show_settings_window(
     button_row(
         files_card,
         (
+            (
+                "Browse...",
+                lambda: browse_folder(
+                    asset_var,
+                    "Choose tracked files/projects folder",
+                    repo_var.get() or config.repo_path,
+                ),
+            ),
             ("Use Suggested", lambda: asset_var.set(str(Path(repo_var.get().strip().strip('"')) / "projects"))),
             ("Use Repo Folder", lambda: asset_var.set(repo_var.get())),
             ("Clear", lambda: asset_var.set("")),

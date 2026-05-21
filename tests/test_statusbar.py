@@ -13,15 +13,17 @@ from willy.statusbar import (
     _request_existing_tray_open_config,
     _tray_open_config_request_mtime,
     _tray_open_config_request_path,
-    clear_project_folder,
-    configure_project_folder,
-    configure_repository,
     dismiss_tray_welcome,
     force_sync,
     snapshot,
-    suggested_project_folder,
 )
-from willy.tray_settings import choose_existing_directory, folder_dialog_initial_dir
+from willy.tray_settings import (
+    clear_project_folder,
+    configure_project_folder,
+    configure_repository,
+    suggested_project_folder,
+    validate_directory_read_write,
+)
 
 
 def _configured_repo(tmp_path: Path):
@@ -267,6 +269,30 @@ def test_configure_repository_rejects_missing_folder_when_create_is_false(tmp_pa
     assert not repo.exists()
 
 
+def test_configure_repository_rejects_directory_without_write_access(tmp_path, monkeypatch) -> None:
+    paths = default_paths(tmp_path / "home")
+    repo = tmp_path / "repo"
+
+    def fake_access(label: str, folder: Path) -> str | None:
+        if label == "Repository folder":
+            return f"{label} is not writable:\n{folder}\npermission denied"
+        return None
+
+    monkeypatch.setattr("willy.tray_settings.validate_directory_read_write", fake_access)
+
+    message = configure_repository(
+        paths,
+        orca_user_dir=repo,
+        repo_path=repo,
+        remote="",
+        branch="main",
+        repo_private=False,
+    )
+
+    assert "Repository folder is not writable" in message
+    assert load_config(paths).repo_path != repo
+
+
 def test_suggested_project_folder_uses_projects_under_repo(tmp_path) -> None:
     paths, repo = _configured_repo(tmp_path)
     config = load_config(paths)
@@ -274,50 +300,40 @@ def test_suggested_project_folder_uses_projects_under_repo(tmp_path) -> None:
     assert suggested_project_folder(config) == repo / "projects"
 
 
-def test_folder_dialog_initial_dir_prefers_existing_current_path(tmp_path) -> None:
-    current = tmp_path / "current"
-    fallback = tmp_path / "fallback"
-    current.mkdir()
-    fallback.mkdir()
+def test_validate_directory_read_write_accepts_accessible_directory(tmp_path) -> None:
+    folder = tmp_path / "folder"
+    folder.mkdir()
 
-    assert folder_dialog_initial_dir(current, fallback) == current
-
-
-def test_folder_dialog_initial_dir_uses_existing_fallback(tmp_path) -> None:
-    fallback = tmp_path / "fallback"
-    fallback.mkdir()
-
-    assert folder_dialog_initial_dir(tmp_path / "missing", fallback) == fallback
+    assert validate_directory_read_write("Repository folder", folder) is None
+    assert list(folder.iterdir()) == []
 
 
-def test_choose_existing_directory_uses_system_dialog(tmp_path) -> None:
-    fallback = tmp_path / "fallback"
-    selected = tmp_path / "selected"
-    fallback.mkdir()
-    selected.mkdir()
-    calls = []
+def test_validate_directory_read_write_rejects_file_path(tmp_path) -> None:
+    file_path = tmp_path / "not-a-folder"
+    file_path.write_text("x", encoding="utf-8")
 
-    class FakeFileDialog:
-        @staticmethod
-        def askdirectory(**kwargs):
-            calls.append(kwargs)
-            return str(selected)
+    message = validate_directory_read_write("Repository folder", file_path)
 
-    assert choose_existing_directory(
-        FakeFileDialog,
-        parent="window",
-        title="Choose folder",
-        current=tmp_path / "missing",
-        fallback=fallback,
-    ) == str(selected)
-    assert calls == [
-        {
-            "parent": "window",
-            "title": "Choose folder",
-            "initialdir": str(fallback),
-            "mustexist": True,
-        }
-    ]
+    assert message == f"Repository folder path exists, but it is not a folder:\n{file_path}"
+
+
+def test_validate_directory_read_write_reports_write_failure(tmp_path, monkeypatch) -> None:
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    original_open = Path.open
+
+    def fake_open(self, *args, **kwargs):
+        if self.name.startswith(".willy-write-test-"):
+            raise PermissionError("permission denied")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    message = validate_directory_read_write("Repository folder", folder)
+
+    assert message is not None
+    assert "Repository folder is not writable" in message
+    assert "permission denied" in message
 
 
 def test_dismiss_tray_welcome_persists_preference(tmp_path) -> None:

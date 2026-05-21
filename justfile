@@ -1,4 +1,5 @@
 set dotenv-load := false
+set windows-shell := ["powershell.exe", "-NoLogo", "-ExecutionPolicy", "Bypass", "-Command"]
 
 os := "linux"
 image := "willy-dev-" + os
@@ -29,8 +30,10 @@ test:
 test-windows:
     powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 test
 
-build-windows-exe:
+build:
     powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 build-exe
+
+build-windows-exe: build
 
 run:
     .venv/bin/willy start

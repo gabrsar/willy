@@ -13,7 +13,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from willy.config import WillyConfig, WillyState, load_state, save_state
-from willy.errors import WillyError
+from willy.errors import GitConflictError, WillyError
 from willy.files import classify_path
 from willy.locks import LockError, acquire_lock
 from willy.logging import write_event
@@ -232,7 +232,10 @@ def run_daemon(
                     observer = None
                     collector = None
                     _flush(paths, config, description="Final save after OrcaSlicer closed")
-                    sync_status = sync_repo(config.repo_path)
+                    try:
+                        sync_status = sync_repo(config.repo_path)
+                    except GitConflictError as exc:
+                        sync_status = f"conflict: {exc}"
                     current_state = _clear_pending(
                         replace(
                             current_state,

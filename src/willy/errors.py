@@ -24,3 +24,7 @@ class GitError(WillyError):
 
 class ConfigError(WillyError):
     """Raised when configuration cannot be loaded or saved safely."""
+
+
+class GitConflictError(GitError):
+    """Raised when Git reports files that need a human conflict decision."""

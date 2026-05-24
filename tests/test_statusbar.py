@@ -13,6 +13,7 @@ from willy.statusbar import (
     _request_existing_tray_open_config,
     _tray_open_config_request_mtime,
     _tray_open_config_request_path,
+    check_remote_on_load,
     dismiss_tray_welcome,
     force_sync,
     snapshot,
@@ -97,6 +98,18 @@ def test_snapshot_shows_saving_when_operation_is_active(tmp_path, monkeypatch) -
     assert "Daemon: running" in current.details
 
 
+def test_snapshot_shows_conflict_status(tmp_path, monkeypatch) -> None:
+    paths, _repo = _configured_repo(tmp_path)
+    save_state(paths, WillyState(last_sync_status="conflict: fix files", daemon_pid=123))
+    monkeypatch.setattr("willy.statusbar.pid_is_running", lambda pid: True)
+
+    current = snapshot(paths, is_orca_running_func=lambda: False)
+
+    assert current.phase == "conflict"
+    assert current.icon_title == "W!"
+    assert current.summary == "Willy: conflict needs your decision"
+
+
 def test_force_sync_saves_and_clears_operation(tmp_path) -> None:
     paths, repo = _configured_repo(tmp_path)
     profile = repo / "default" / "filament" / "PETG.json"
@@ -109,6 +122,60 @@ def test_force_sync_saves_and_clears_operation(tmp_path) -> None:
     assert "Sync: no remote configured" in message
     assert load_state(paths).active_operation is None
     assert "PETG" in run_git(repo, "show", "HEAD:default/filament/PETG.json").stdout
+
+
+def test_check_remote_on_load_notifies_when_remote_updates_are_available(tmp_path) -> None:
+    home = tmp_path / "home"
+    paths = default_paths(home)
+    remote = tmp_path / "remote.git"
+    source = tmp_path / "source"
+    repo = tmp_path / "repo"
+    remote.mkdir()
+    source.mkdir()
+    run_git(remote, "init", "--bare")
+    run_git(source, "init")
+    run_git(source, "config", "user.email", "test@example.com")
+    run_git(source, "config", "user.name", "Willy Test")
+    (source / "profile.json").write_text("{}\n", encoding="utf-8")
+    run_git(source, "add", "profile.json")
+    run_git(source, "commit", "-m", "initial")
+    run_git(source, "branch", "-M", "main")
+    run_git(source, "remote", "add", "origin", str(remote))
+    run_git(source, "push", "-u", "origin", "main")
+    run_git(tmp_path, "clone", "--branch", "main", str(remote), str(repo))
+    (source / "profile.json").write_text('{"name": "new"}\n', encoding="utf-8")
+    run_git(source, "add", "profile.json")
+    run_git(source, "commit", "-m", "remote update")
+    run_git(source, "push")
+    save_config(paths, WillyConfig(orca_user_dir=repo, repo_path=repo))
+
+    message = check_remote_on_load(paths)
+
+    assert "Remote updates are available" in message
+    assert load_state(paths).last_sync_status == message
+
+
+def test_check_remote_on_load_reports_missing_remote(tmp_path) -> None:
+    paths, _repo = _configured_repo(tmp_path)
+
+    message = check_remote_on_load(paths)
+
+    assert message == "no remote configured"
+    assert load_state(paths).last_sync_status == "no remote configured"
+
+
+def test_check_remote_on_load_records_fetch_failure(tmp_path, monkeypatch) -> None:
+    paths, _repo = _configured_repo(tmp_path)
+
+    def fail_fetch(_repo):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr("willy.statusbar.fetch_remote_updates", fail_fetch)
+
+    message = check_remote_on_load(paths)
+
+    assert message == "Remote check failed: nope"
+    assert load_state(paths).last_sync_status == message
 
 
 def test_configure_project_folder_saves_folder_inside_repo(tmp_path) -> None:

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from willy.git import config_get_local, run_git
-from willy.operations import save_profile_changes, sync_repo, unsaved_summary
+from willy.operations import fetch_remote_updates, save_profile_changes, sync_repo, unsaved_summary
 from willy.redact import REDACTED
 
 
@@ -105,3 +105,40 @@ def test_sync_repo_without_changes_still_pushes_existing_commit(tmp_path: Path) 
 
     assert sync_repo(repo) == "synced"
     assert sync_repo(repo) == "synced"
+
+
+def test_sync_repo_reports_rebase_conflict_in_progress(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    repo = tmp_path / "repo"
+    remote.mkdir()
+    repo.mkdir()
+    run_git(remote, "init", "--bare")
+    run_git(repo, "init")
+    run_git(repo, "remote", "add", "origin", str(remote))
+    (repo / ".git" / "rebase-merge").mkdir()
+
+    message = sync_repo(repo)
+
+    assert message.startswith("conflict:")
+    assert "Fix the conflict" in message
+
+
+def test_fetch_remote_updates_fetches_remote_refs(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    source = tmp_path / "source"
+    repo = tmp_path / "repo"
+    remote.mkdir()
+    source.mkdir()
+    run_git(remote, "init", "--bare")
+    run_git(source, "init")
+    run_git(source, "config", "user.email", "test@example.com")
+    run_git(source, "config", "user.name", "Willy Test")
+    (source / "profile.json").write_text("{}\n", encoding="utf-8")
+    run_git(source, "add", "profile.json")
+    run_git(source, "commit", "-m", "initial")
+    run_git(source, "branch", "-M", "main")
+    run_git(source, "remote", "add", "origin", str(remote))
+    run_git(source, "push", "-u", "origin", "main")
+    run_git(tmp_path, "clone", "--branch", "main", str(remote), str(repo))
+
+    assert fetch_remote_updates(repo) == "checked remote"

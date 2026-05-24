@@ -1,0 +1,77 @@
+name: Release Build
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  python-package:
+    name: Build Python package
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build frontend
+        run: python -m pip install --upgrade build
+
+      - name: Build source and wheel distributions
+        run: python -m build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: willy-python-package
+          path: dist/*
+
+      - name: Upload package files to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG_NAME" dist/* --clobber
+
+  windows-tray:
+    name: Build Windows tray
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: python -m pip install -e ".[dev]"
+
+      - name: Build tray executable
+        shell: pwsh
+        run: .\scripts\dev.ps1 build-exe
+
+      - name: Archive tray executable
+        shell: pwsh
+        run: Compress-Archive -Path .\dist\WillyTray -DestinationPath .\dist\WillyTray-windows-x64.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WillyTray-windows-x64
+          path: dist/WillyTray-windows-x64.zip
+
+      - name: Upload tray executable to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: gh release upload $env:TAG_NAME .\dist\WillyTray-windows-x64.zip --clobber

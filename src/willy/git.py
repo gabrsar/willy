@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from willy.errors import GitError
+from willy.errors import GitConflictError, GitError
 
 DEFAULT_TIMEOUT_SECONDS = 60
 
@@ -171,6 +171,24 @@ def status_porcelain(path: Path) -> list[GitStatusEntry]:
     return entries
 
 
+def conflicted_paths(path: Path) -> list[str]:
+    conflicts: list[str] = []
+    for entry in status_porcelain(path):
+        x, y = entry.code[0], entry.code[1]
+        if "U" in entry.code or entry.code in {"AA", "DD"} or (x == "A" and y == "A") or (x == "D" and y == "D"):
+            conflicts.append(entry.path)
+    return conflicts
+
+
+def rebase_in_progress(path: Path) -> bool:
+    git_dir = run_git(path, "rev-parse", "--git-dir", check=False)
+    if git_dir.returncode != 0:
+        return False
+    raw = git_dir.stdout.strip()
+    directory = Path(raw) if Path(raw).is_absolute() else path / raw
+    return (directory / "rebase-merge").exists() or (directory / "rebase-apply").exists()
+
+
 def last_commit(path: Path) -> str | None:
     result = run_git(path, "log", "-1", "--pretty=%h %s", check=False)
     if result.returncode != 0:
@@ -309,7 +327,33 @@ def ensure_commit_identity(path: Path) -> None:
 
 
 def pull_rebase(path: Path) -> GitResult:
-    return run_git(path, "pull", "--rebase")
+    try:
+        return run_git(path, "pull", "--rebase")
+    except GitError as exc:
+        conflicts = conflicted_paths(path)
+        detail = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+        conflict_markers = (
+            "CONFLICT",
+            "Resolve all conflicts manually",
+            "could not apply",
+            "rebase in progress",
+        )
+        if conflicts or any(marker in detail for marker in conflict_markers):
+            paths = ", ".join(conflicts[:8]) if conflicts else "unknown files"
+            raise GitConflictError(
+                "Willy hit a Git conflict while downloading remote changes.\n\n"
+                f"Conflicted files: {paths}\n\n"
+                "Fix the conflict in the repository, then run `willy save` or use Force Sync again.",
+                command=exc.command,
+                returncode=exc.returncode,
+                stdout=exc.stdout,
+                stderr=exc.stderr,
+            ) from exc
+        raise
+
+
+def fetch(path: Path) -> GitResult:
+    return run_git(path, "fetch", "--prune")
 
 
 def push(path: Path) -> GitResult:

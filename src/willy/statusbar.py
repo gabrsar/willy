@@ -10,6 +10,7 @@ from typing import Any
 
 from willy.config import WillyConfig, load_config, load_state, save_config, save_state
 from willy.daemon import pid_is_running, run_daemon
+from willy.errors import GitConflictError
 from willy.git import (
     current_branch,
     is_repo,
@@ -20,7 +21,7 @@ from willy.git import (
 )
 from willy.launchd import disable_launchd, enable_launchd, launchd_enabled
 from willy.logging import setup_logging, write_event
-from willy.operations import save_profile_changes, sync_repo, unsaved_summary
+from willy.operations import fetch_remote_updates, save_profile_changes, sync_repo, unsaved_summary
 from willy.orca import is_orca_running
 from willy.paths import WillyPaths, default_paths
 from willy.windows_startup import disable_windows_startup, enable_windows_startup, windows_startup_enabled
@@ -191,6 +192,8 @@ def _sync_line(state) -> str:
 
 
 def _phase(state, *, unsaved_count: int, sync_pending: bool) -> str:
+    if state.last_sync_status and state.last_sync_status.startswith("conflict:"):
+        return "conflict"
     if state.active_operation == "saving":
         return "saving"
     if state.pending_save_count or state.next_save_at or unsaved_count or sync_pending:
@@ -214,12 +217,13 @@ def snapshot(
     sync_pending = bool(delta and delta.pending)
     daemon_running = _embedded_daemon_running() or pid_is_running(state.daemon_pid)
     phase = _phase(state, unsaved_count=unsaved_count, sync_pending=sync_pending)
-    title = {"no pending": "W", "pending": "W*", "saving": "W..."}[phase]
+    title = {"no pending": "W", "pending": "W*", "saving": "W...", "conflict": "W!"}[phase]
     pending_count = unsaved_count or state.pending_save_count
     summary = {
         "no pending": "Willy: no pending changes",
         "pending": f"Willy: {pending_count} pending change(s)" if pending_count else "Willy: sync pending",
         "saving": "Willy: saving",
+        "conflict": "Willy: conflict needs your decision",
     }[phase]
     branch = current_branch(config.repo_path) if repo_ready else None
     remote = remote_url(config.repo_path) if repo_ready else None
@@ -262,6 +266,41 @@ def snapshot(
     )
 
 
+def check_remote_on_load(paths: WillyPaths | None = None) -> str:
+    paths = paths or default_paths()
+    setup_logging(paths)
+    config = load_config(paths)
+    if not config.repo_path.exists() or not is_repo(config.repo_path):
+        return "Sync repo is not ready. Run willy setup first."
+    try:
+        fetch_status = fetch_remote_updates(config.repo_path)
+        delta = sync_delta(config.repo_path)
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        if fetch_status == "no remote configured":
+            message = fetch_status
+        elif delta.pending:
+            if delta.needs_upstream:
+                message = "Remote check complete. Sync setup still needs an upstream branch."
+            elif delta.behind:
+                message = (
+                    f"Remote updates are available ({delta.behind} commit(s) to download). Use Force Sync / Download."
+                )
+            elif delta.ahead:
+                message = f"Local saves are waiting to upload ({delta.ahead} commit(s)). Use Force Sync / Download."
+            else:
+                message = fetch_status
+        else:
+            message = "Remote check complete. Willy is up to date."
+        save_state(paths, replace(load_state(paths), last_sync_at=now, last_sync_status=message))
+        write_event(paths, "statusbar_load_remote_check", status=message)
+        return message
+    except Exception as exc:
+        message = f"Remote check failed: {exc}"
+        save_state(paths, replace(load_state(paths), last_sync_status=message))
+        write_event(paths, "statusbar_load_remote_check_failed", error=str(exc), traceback=traceback.format_exc())
+        return message
+
+
 def force_sync(paths: WillyPaths | None = None) -> str:
     paths = paths or default_paths()
     setup_logging(paths)
@@ -277,7 +316,10 @@ def force_sync(paths: WillyPaths | None = None) -> str:
             allow_sensitive=bool(config.repo_private),
             asset_dirs=config.asset_dirs,
         )
-        sync_status = sync_repo(config.repo_path)
+        try:
+            sync_status = sync_repo(config.repo_path)
+        except GitConflictError as exc:
+            sync_status = f"conflict: {exc}"
         now = datetime.now().astimezone().isoformat(timespec="seconds")
         state = load_state(paths)
         save_state(paths, replace(state, active_operation=None, last_sync_at=now, last_sync_status=sync_status))
@@ -473,6 +515,10 @@ def _run_macos_statusbar(*, poll_seconds: float, start_daemon: bool) -> None:
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     controller = StatusBarController.alloc().initWithPollSeconds_(poll_seconds)
     controller.refresh_(None)
+    load_message = check_remote_on_load(paths)
+    controller.refresh_(None)
+    if "available" in load_message or "failed" in load_message or "upstream" in load_message:
+        controller.showMessage_title_style_(load_message, "Willy", NSInformationalAlertStyle)
     write_event(paths, "statusbar_started", platform="darwin")
     try:
         app.run()

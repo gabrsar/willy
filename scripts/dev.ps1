@@ -16,16 +16,30 @@ $PyInstallerExe = Join-Path $ScriptsDir "pyinstaller.exe"
 $IconPng = Join-Path $RepoRoot "assets\\icon.png"
 $IconIco = Join-Path $RepoRoot "assets\\icon.ico"
 
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed with exit code ${LASTEXITCODE}: $FilePath $($Arguments -join ' ')"
+    }
+}
+
 function Ensure-Venv {
     if (-not (Test-Path $PythonExe)) {
-        python -m venv $VenvDir
+        Invoke-Native python -m venv $VenvDir
     }
 }
 
 function Install-Env {
     Ensure-Venv
-    & $PythonExe -m pip install --upgrade pip
-    & $PythonExe -m pip install -e '.[dev]'
+    Invoke-Native $PythonExe -m pip install --upgrade pip
+    Invoke-Native $PythonExe -m pip install -e '.[dev]'
 }
 
 function Install-Hooks {
@@ -77,26 +91,28 @@ try {
         }
         "lint" {
             Ensure-Venv
-            & $RuffExe check --fix src tests
-            & $RuffExe format src tests
-            & $RuffExe check src tests
+            Invoke-Native $RuffExe check --fix src tests
+            Invoke-Native $RuffExe format src tests
+            Invoke-Native $RuffExe check src tests
         }
         "test" {
             Ensure-Venv
-            & $PytestExe
+            Invoke-Native $PytestExe
         }
         "run" {
             Ensure-Venv
-            & $WillyExe start
+            Invoke-Native $WillyExe start
         }
         "tray" {
             Ensure-Venv
-            & $WillyExe statusbar
+            Invoke-Native $WillyExe statusbar
         }
         "build-exe" {
             Ensure-Venv
+            Remove-Item -LiteralPath (Join-Path $RepoRoot "build\\WillyTray") -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $RepoRoot "dist\\WillyTray") -Recurse -Force -ErrorAction SilentlyContinue
             if ((Test-Path $IconPng) -and -not (Test-Path $IconIco)) {
-                & $PythonExe -c "from PIL import Image; Image.open(r'$IconPng').save(r'$IconIco', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+                Invoke-Native $PythonExe -c "from PIL import Image; Image.open(r'$IconPng').save(r'$IconIco', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
             }
             $args = @(
                 "--noconfirm",
@@ -114,11 +130,11 @@ try {
                 $args += @("--icon", $IconIco)
             }
             $args += ".\\src\\willy\\tray_app.py"
-            & $PyInstallerExe @args
+            Invoke-Native $PyInstallerExe @args
         }
         "stop" {
             Ensure-Venv
-            & $WillyExe stop
+            Invoke-Native $WillyExe stop
         }
         "hooks" {
             Install-Hooks

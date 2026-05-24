@@ -1,10 +1,16 @@
 from pathlib import Path
 
+import pytest
+
+from willy.errors import GitConflictError
 from willy.git import (
     clone_remote,
+    conflicted_paths,
     current_branch,
     is_repo,
     last_commit,
+    pull_rebase,
+    rebase_in_progress,
     remote_refs,
     remote_url,
     run_git,
@@ -90,3 +96,41 @@ def test_remote_refs_and_clone_remote(tmp_path: Path) -> None:
 
     assert "refs/heads/main" in refs
     assert (clone / "profile.json").exists()
+
+
+def test_pull_rebase_raises_conflict_error_and_reports_paths(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    source = tmp_path / "source"
+    clone = tmp_path / "clone"
+    remote.mkdir()
+    source.mkdir()
+    run_git(remote, "init", "--bare")
+    run_git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+    run_git(source, "init")
+    run_git(source, "config", "user.email", "test@example.com")
+    run_git(source, "config", "user.name", "Willy Test")
+    (source / "profile.json").write_text('{"name": "base"}\n', encoding="utf-8")
+    run_git(source, "add", "profile.json")
+    run_git(source, "commit", "-m", "initial")
+    run_git(source, "branch", "-M", "main")
+    run_git(source, "remote", "add", "origin", str(remote))
+    run_git(source, "push", "-u", "origin", "main")
+    run_git(tmp_path, "clone", "--branch", "main", str(remote), str(clone))
+    run_git(clone, "config", "user.email", "test@example.com")
+    run_git(clone, "config", "user.name", "Willy Test")
+
+    (source / "profile.json").write_text('{"name": "remote"}\n', encoding="utf-8")
+    run_git(source, "add", "profile.json")
+    run_git(source, "commit", "-m", "remote edit")
+    run_git(source, "push")
+    (clone / "profile.json").write_text('{"name": "local"}\n', encoding="utf-8")
+    run_git(clone, "add", "profile.json")
+    run_git(clone, "commit", "-m", "local edit")
+
+    with pytest.raises(GitConflictError) as raised:
+        pull_rebase(clone)
+
+    assert "Willy hit a Git conflict" in str(raised.value)
+    assert "profile.json" in str(raised.value)
+    assert conflicted_paths(clone) == ["profile.json"]
+    assert rebase_in_progress(clone)

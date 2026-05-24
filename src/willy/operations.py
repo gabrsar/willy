@@ -11,10 +11,12 @@ from willy.git import (
     disable_redaction_filter,
     ensure_commit_identity,
     ensure_redaction_filter,
+    fetch,
     is_repo,
     pull_rebase,
     push,
     push_set_upstream,
+    rebase_in_progress,
     remote_url,
     status_porcelain,
     upstream_branch,
@@ -105,6 +107,11 @@ def save_profile_changes(
 def sync_repo(repo: Path) -> str:
     if not remote_url(repo):
         return "no remote configured"
+    if rebase_in_progress(repo):
+        return (
+            "conflict: Willy paused because a previous Git rebase needs attention. "
+            "Fix the conflict in the repository, then run `willy save` or Force Sync again."
+        )
     branch = current_branch(repo)
     if branch and not upstream_branch(repo):
         push_set_upstream(repo, "origin", branch)
@@ -112,3 +119,10 @@ def sync_repo(repo: Path) -> str:
     pull_rebase(repo)
     push(repo)
     return "synced"
+
+
+def fetch_remote_updates(repo: Path) -> str:
+    if not remote_url(repo):
+        return "no remote configured"
+    fetch(repo)
+    return "checked remote"

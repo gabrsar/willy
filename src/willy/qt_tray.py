@@ -16,6 +16,8 @@ from willy.statusbar import (
     _start_embedded_daemon,
     _stop_embedded_daemon,
     _tray_open_config_request_mtime,
+    check_remote_on_load,
+    force_sync,
     snapshot,
 )
 from willy.tray_settings import configure_repository
@@ -100,6 +102,20 @@ def run_windows_tray(*, poll_seconds: float, start_daemon: bool) -> None:
         copy.clicked.connect(lambda: QApplication.clipboard().setText(state["snapshot"].details))
         close.clicked.connect(dialog.close)
         dialog.exec()
+
+    def run_force_sync() -> None:
+        try:
+            message = force_sync(paths)
+        except Exception as exc:
+            message = f"Force sync failed:\n{exc}"
+        refresh()
+        QMessageBox.information(None, "Willy Sync", message)
+
+    def remote_check_on_load() -> None:
+        message = check_remote_on_load(paths)
+        refresh()
+        if "available" in message or "failed" in message or "upstream" in message:
+            tray.showMessage("Willy", message, QSystemTrayIcon.MessageIcon.Information, 8000)
 
     def line_with_browse(label: str, value: str, parent: QWidget) -> tuple[QLineEdit, QPushButton]:
         edit = QLineEdit(value)
@@ -315,17 +331,21 @@ def run_windows_tray(*, poll_seconds: float, start_daemon: bool) -> None:
         app.quit()
 
     status_action = QAction("Status", menu)
+    sync_action = QAction("Force Sync / Download", menu)
     settings_action = QAction("Settings", menu)
     exit_action = QAction("Exit", menu)
     status_action.triggered.connect(show_status)
+    sync_action.triggered.connect(run_force_sync)
     settings_action.triggered.connect(open_settings)
     exit_action.triggered.connect(exit_tray)
     menu.addAction(status_action)
+    menu.addAction(sync_action)
     menu.addAction(settings_action)
     menu.addSeparator()
     menu.addAction(exit_action)
     tray.setContextMenu(menu)
     tray.show()
+    QTimer.singleShot(100, remote_check_on_load)
 
     refresh_timer = QTimer()
     refresh_timer.timeout.connect(refresh)
